@@ -9,36 +9,12 @@ find_package(Vulkan REQUIRED)
 
 include_directories(${Vulkan_INCLUDE_DIRS})
 
-set(SOURCES
-    Source/Main.cpp
-    Source/General.h
-    Source/Platform/PlatformContext.h
-    Source/Platform/Platform.h
-    Source/Platform/Platform.cpp
-    Source/Platform/PlatformWindows.cpp
-    Source/DataStructures/Arena.cpp
-    Source/DataStructures/Arena.h
-    Source/DataStructures/Array.cpp
-    Source/DataStructures/Array.h
-    Source/DataStructures/String.h
-    Source/Window/Keys.h
-    Source/Window/Window.h
-    Source/Window/WindowWindows.cpp
-    Source/Math/Mat.cpp
-    Source/Math/Mat.h
-    Source/Math/NMath.cpp
-    Source/Math/NMath.h
-    Source/Math/Quat.cpp
-    Source/Math/Quat.h
-    Source/Math/SIMD.cpp
-    Source/Math/SIMD.h
-    Source/Math/Vec.cpp
-    Source/Math/Vec.h
-    Source/ThirdParty/ThirdPartyBuild.cpp
-    Source/ThirdParty/stb_sprintf.h
-)
+file(GLOB_RECURSE SOURCES "Source/*.cpp" "Source/*.h")
+file(GLOB_RECURSE SHADER_SOURCES "Assets/Shaders/*.slang")
 
 add_executable(nmc ${SOURCES})
+
+add_compile_definitions(VK_USE_PLATFORM_WIN32_KHR)
 
 target_link_libraries(nmc ${Vulkan_LIBRARIES})
 
@@ -47,3 +23,31 @@ if (CMAKE_BUILD_TYPE MATCHES Debug)
 endif()
 
 message(STATUS "Found Vulkan: ${Vulkan_LIBRARIES}")
+
+set(SPIRV_FILES "")
+foreach(SHADER_SOURCE ${SHADER_SOURCES})
+    get_filename_component(FILE_NAME ${SHADER_SOURCE} NAME_WE)
+
+    set(VERT_SPV ${CMAKE_BINARY_DIR}/Assets/Shaders/${FILE_NAME}-Vert.spv)
+    set(FRAG_SPV ${CMAKE_BINARY_DIR}/Assets/Shaders/${FILE_NAME}-Frag.spv)
+
+    add_custom_command(
+        OUTPUT ${VERT_SPV}
+        COMMAND slangc ${SHADER_SOURCE} -o ${VERT_SPV} -entry VSMain
+        DEPENDS ${SHADER_SOURCE}
+        COMMENT "Compiling vertex shader ${SHADER_SOURCE}"
+    )
+
+    add_custom_command(
+        OUTPUT ${FRAG_SPV}
+        COMMAND slangc ${SHADER_SOURCE} -o ${FRAG_SPV} -entry PSMain
+        DEPENDS ${SHADER_SOURCE}
+        COMMENT "Compiling fragment shader ${SHADER_SOURCE}"
+    )
+    list(APPEND SPIRV_FILES ${VERT_SPV} ${FRAG_SPV})
+endforeach()
+
+add_custom_target(
+    Shaders DEPENDS ${SPIRV_FILES}
+)
+add_dependencies(nmc Shaders)

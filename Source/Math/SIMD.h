@@ -6,7 +6,7 @@
 #include <immintrin.h>
 #endif
 
-struct f32x4 {
+union f32x4 {
     float E[4];
 
 #if ARCH_X64

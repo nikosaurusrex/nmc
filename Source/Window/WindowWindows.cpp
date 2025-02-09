@@ -85,40 +85,6 @@ static LRESULT CALLBACK WindowProc(HWND handle, UINT umsg, WPARAM wparam, LPARAM
             }
             result = DefWindowProc(handle, umsg, wparam, lparam);
         } break;
-        case WM_NCPAINT: {
-        } break;
-        case WM_NCACTIVATE: {
-            result = DefWindowProc(handle, umsg, wparam, -1);
-        } break;
-        case WM_CREATE: {
-            SetWindowPos(
-                handle, 0,
-                0, 0, 0, 0,
-                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER
-            );
-        } break;
-        case WM_NCCALCSIZE: {
-            if (wparam) {
-                UINT dpi = GetDpiForWindow(handle);
-
-                int framex = GetSystemMetricsForDpi(SM_CXFRAME, dpi);
-                int framey = GetSystemMetricsForDpi(SM_CYFRAME, dpi);
-                int padding = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
-
-                NCCALCSIZE_PARAMS *params = (NCCALCSIZE_PARAMS *)lparam;
-                RECT *client_rect = params->rgrc;
-
-                client_rect->right -= framex + padding;
-                client_rect->left += framex + padding;
-                client_rect->bottom -= framey + padding;
-
-                if (win && IsMaximized(win)) {
-                    client_rect->top += padding;
-                }
-            } else {
-                result = DefWindowProc(handle, umsg, wparam, lparam);
-            }
-        };
         default: {
             result = DefWindowProc(handle, umsg, wparam, lparam);
         } break;
@@ -197,6 +163,26 @@ b8 InitWindow(Window *win) {
         Print("Failed to register mouse raw input\n");
         return 0;
     }
+
+    win->device_ctx = GetDC(handle);
+
+    PIXELFORMATDESCRIPTOR pfd = {};
+    pfd.nSize = sizeof(pfd);
+    pfd.nVersion = 1;
+    pfd.dwFlags = PFD_DRAW_TO_WINDOW;
+    pfd.iPixelType = PFD_TYPE_RGBA;
+    pfd.cColorBits = 24;
+    pfd.cAlphaBits = 8;
+    pfd.cDepthBits = 24;
+    pfd.cStencilBits = 8;
+    pfd.iLayerType = PFD_MAIN_PLANE;
+
+    int format = ChoosePixelFormat(win->device_ctx, &pfd);
+    if (!format) {
+        Print("Failed ChoosePixelFormat!\n");
+        return 0;
+    }
+    SetPixelFormat(win->device_ctx, format, &pfd);
 
     // Show Window
     ShowWindow(handle, SW_SHOW);
