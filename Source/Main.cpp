@@ -15,12 +15,28 @@ struct Vertex {
 	vec2 uv;
 };
 
+struct BlockTexture {
+	uint sides;
+	uint top;
+	uint bot;
+};
+
+struct Block {
+	int type;
+};
+
+struct InstanceData {
+	vec3 pos;
+	BlockTexture texture;
+};
+
 struct Renderer {
 	DescriptorSet desc_set;
 	Pipeline pipeline;
 	VkCommandBuffer cmdbuf;
 	Buffer vertex_buffer;
 	Buffer index_buffer;
+	Buffer instance_buffer;
 	Buffer globals_buffer;
 };
 
@@ -43,42 +59,76 @@ struct OrbitCamera {
     float height;
 };
 
+enum {
+	CHUNK_X = 16,
+	CHUNK_Y = 16,
+	CHUNK_Z = 16,
+};
+
+enum {
+	BLOCK_AIR,
+	BLOCK_DIRT,
+	BLOCK_GRASS,
+	BLOCK_OAK_LOG,
+	BLOCK_STONE,
+	BLOCK_COBBLE_STONE,
+	BLOCK_STONE_BRICKS
+};
+
+enum {
+	TEXTURE_DIRT,
+	TEXTURE_GRASS_SIDE,
+	TEXTURE_GRASS_TOP,
+	TEXTURE_OAK_LOG_SIDE,
+	TEXTURE_OAK_LOG_TOP,
+	TEXTURE_STONE,
+	TEXTURE_COBBLE_STONE,
+	TEXTURE_STONE_BRICKS,
+
+	TEXTURE_COUNT
+};
+
+struct Textures {
+	Image images[TEXTURE_COUNT];
+	VkDescriptorImageInfo descriptors[TEXTURE_COUNT];
+};
+
 global const Vertex cube_vertices[] = {
 	// back
-	{vec3(1.0f, 1.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f), vec2(0.0f, 1.0f)},
-	{vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f), vec2(0.0f, 0.0f)},
-	{vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f), vec2(1.0f, 0.0f)},
-	{vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f), vec2(1.0f, 1.0f)},
+	{vec3(1.0f, 1.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f), vec2(0.0f, 0.0f)},
+	{vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f), vec2(0.0f, 1.0f)},
+	{vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f), vec2(1.0f, 1.0f)},
+	{vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f), vec2(1.0f, 0.0f)},
 
 	// bot
-	{vec3(0.0f, 0.0f, 1.0f), vec3(0.0f, -1.0f, 0.0f), vec2(0.0f, 1.0f)},
-	{vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f), vec2(0.0f, 0.0f)},
-	{vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f), vec2(1.0f, 0.0f)},
-	{vec3(1.0f, 0.0f, 1.0f), vec3(0.0f, -1.0f, 0.0f), vec2(1.0f, 1.0f)},
+	{vec3(0.0f, 0.0f, 1.0f), vec3(0.0f, -1.0f, 0.0f), vec2(0.0f, 0.0f)},
+	{vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f), vec2(0.0f, 1.0f)},
+	{vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f), vec2(1.0f, 1.0f)},
+	{vec3(1.0f, 0.0f, 1.0f), vec3(0.0f, -1.0f, 0.0f), vec2(1.0f, 0.0f)},
 
 	// top
-	{vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f), vec2(0.0f, 1.0f)},
-	{vec3(0.0f, 1.0f, 1.0f), vec3(0.0f, 1.0f, 0.0f), vec2(0.0f, 0.0f)},
-	{vec3(1.0f, 1.0f, 1.0f), vec3(0.0f, 1.0f, 0.0f), vec2(1.0f, 0.0f)},
-	{vec3(1.0f, 1.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f), vec2(1.0f, 1.0f)},
+	{vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f), vec2(0.0f, 0.0f)},
+	{vec3(0.0f, 1.0f, 1.0f), vec3(0.0f, 1.0f, 0.0f), vec2(0.0f, 1.0f)},
+	{vec3(1.0f, 1.0f, 1.0f), vec3(0.0f, 1.0f, 0.0f), vec2(1.0f, 1.0f)},
+	{vec3(1.0f, 1.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f), vec2(1.0f, 0.0f)},
 
 	// right
-	{vec3(1.0f, 1.0f, 1.0f), vec3(1.0f, 0.0f, 0.0f), vec2(0.0f, 1.0f)},
-	{vec3(1.0f, 0.0f, 1.0f), vec3(1.0f, 0.0f, 0.0f), vec2(0.0f, 0.0f)},
-	{vec3(1.0f, 0.0f, 0.0f), vec3(1.0f, 0.0f, 0.0f), vec2(1.0f, 0.0f)},
-	{vec3(1.0f, 1.0f, 0.0f), vec3(1.0f, 0.0f, 0.0f), vec2(1.0f, 1.0f)},
+	{vec3(1.0f, 1.0f, 1.0f), vec3(1.0f, 0.0f, 0.0f), vec2(0.0f, 0.0f)},
+	{vec3(1.0f, 0.0f, 1.0f), vec3(1.0f, 0.0f, 0.0f), vec2(0.0f, 1.0f)},
+	{vec3(1.0f, 0.0f, 0.0f), vec3(1.0f, 0.0f, 0.0f), vec2(1.0f, 1.0f)},
+	{vec3(1.0f, 1.0f, 0.0f), vec3(1.0f, 0.0f, 0.0f), vec2(1.0f, 0.0f)},
 
 	// left
-	{vec3(0.0f, 1.0f, 0.0f), vec3(-1.0f, 0.0f, 0.0f), vec2(0.0f, 1.0f)},
-	{vec3(0.0f, 0.0f, 0.0f), vec3(-1.0f, 0.0f, 0.0f), vec2(0.0f, 0.0f)},
-	{vec3(0.0f, 0.0f, 1.0f), vec3(-1.0f, 0.0f, 0.0f), vec2(1.0f, 0.0f)},
-	{vec3(0.0f, 1.0f, 1.0f), vec3(-1.0f, 0.0f, 0.0f), vec2(1.0f, 1.0f)},
+	{vec3(0.0f, 1.0f, 0.0f), vec3(-1.0f, 0.0f, 0.0f), vec2(0.0f, 0.0f)},
+	{vec3(0.0f, 0.0f, 0.0f), vec3(-1.0f, 0.0f, 0.0f), vec2(0.0f, 1.0f)},
+	{vec3(0.0f, 0.0f, 1.0f), vec3(-1.0f, 0.0f, 0.0f), vec2(1.0f, 1.0f)},
+	{vec3(0.0f, 1.0f, 1.0f), vec3(-1.0f, 0.0f, 0.0f), vec2(1.0f, 0.0f)},
 
 	// front
-	{vec3(0.0f, 1.0f, 1.0f), vec3(0.0f, 0.0f, 1.0f), vec2(0.0f, 1.0f)},
-	{vec3(0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, 1.0f), vec2(0.0f, 0.0f)},
-	{vec3(1.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, 1.0f), vec2(1.0f, 0.0f)},
-	{vec3(1.0f, 1.0f, 1.0f), vec3(0.0f, 0.0f, 1.0f), vec2(1.0f, 1.0f)},
+	{vec3(0.0f, 1.0f, 1.0f), vec3(0.0f, 0.0f, 1.0f), vec2(0.0f, 0.0f)},
+	{vec3(0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, 1.0f), vec2(0.0f, 1.0f)},
+	{vec3(1.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, 1.0f), vec2(1.0f, 1.0f)},
+	{vec3(1.0f, 1.0f, 1.0f), vec3(0.0f, 0.0f, 1.0f), vec2(1.0f, 0.0f)},
 };
 
 global const u32 cube_indices[] = {
@@ -105,6 +155,19 @@ global const u32 cube_indices[] = {
 	// front
 	20, 21, 22,
 	20, 22, 23
+};
+
+global Block blocks[CHUNK_X][CHUNK_Z][CHUNK_Y];
+global InstanceData instance_data[CHUNK_X * CHUNK_Z * CHUNK_Y];
+
+global BlockTexture block_textures_map[] = {
+	{},
+	{TEXTURE_DIRT, TEXTURE_DIRT, TEXTURE_DIRT},
+	{TEXTURE_GRASS_SIDE, TEXTURE_GRASS_TOP, TEXTURE_DIRT},
+	{TEXTURE_OAK_LOG_SIDE, TEXTURE_OAK_LOG_TOP, TEXTURE_OAK_LOG_TOP},
+	{TEXTURE_STONE, TEXTURE_STONE, TEXTURE_STONE},
+	{TEXTURE_COBBLE_STONE, TEXTURE_COBBLE_STONE, TEXTURE_COBBLE_STONE},
+	{TEXTURE_STONE_BRICKS, TEXTURE_STONE_BRICKS, TEXTURE_STONE_BRICKS},
 };
 
 OrbitCamera CreateOrbitCamera() {
@@ -204,7 +267,8 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 	VkDescriptorSetLayoutBinding bindings[] = {
 		{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
 		{1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
-		{2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0}
+		{2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
+		{3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, 0}
 	};
 	result.desc_set = CreateDescriptorSet(bindings, ArrayCount(bindings));
 
@@ -224,6 +288,7 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 
 	result.vertex_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizeof(Vertex) * ArrayCount(cube_vertices), (void *)cube_vertices);
 	result.index_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, sizeof(u32) * ArrayCount(cube_indices), (void *) cube_indices);
+	result.instance_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizeof(instance_data), 0);
 
 	Globals globals = {};
 	result.globals_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(globals), &globals);
@@ -234,13 +299,31 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 void DestroyRenderer(Renderer *r) {
 	DestroyBuffer(r->vertex_buffer);
 	DestroyBuffer(r->index_buffer);
+	DestroyBuffer(r->instance_buffer);
 	DestroyBuffer(r->globals_buffer);
 
 	DestroyPipeline(r->pipeline);
 	FreeDescriptorSet(r->desc_set);
 }
 
-void Render(Renderer *r, Texture *tex, VkCommandBuffer cmdbuf) {
+void Render(Renderer *r, Textures *textures, VkCommandBuffer cmdbuf) {
+	u32 instance_count = 0;
+	for (int x = 0; x < CHUNK_X; ++x) {
+		for (int z = 0; z < CHUNK_Z; ++z) {
+			for (int y = 0; y < CHUNK_Y; ++y) {
+				Block b = blocks[x][z][y];
+				if (b.type != BLOCK_AIR) {
+					InstanceData *id = instance_data + instance_count;
+					id->pos = vec3(x, y, z);
+					id->texture = block_textures_map[b.type];
+					instance_count++;
+				}
+			}
+		}
+	}
+
+	UpdateRendererBuffer(r->instance_buffer, instance_count * sizeof(InstanceData), instance_data, cmdbuf);
+
 	vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline.handle);
 	vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline.layout, 0, 1, &r->desc_set.handle, 0, 0);
 
@@ -270,23 +353,37 @@ void Render(Renderer *r, Texture *tex, VkCommandBuffer cmdbuf) {
 
 		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &desc_write, 0, 0);
 	}
+
+	if (instance_count > 0) {
+		VkDescriptorBufferInfo instance_desc = { r->instance_buffer.handle, 0, instance_count * sizeof(InstanceData) };
+
+		VkWriteDescriptorSet instance_write = {};
+		instance_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		instance_write.dstSet = r->desc_set.handle;
+		instance_write.dstBinding = 2;
+		instance_write.descriptorCount = 1;
+		instance_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		instance_write.pBufferInfo = &instance_desc;
+
+		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &instance_write, 0, 0);
+	}
 	
 	{
 		VkWriteDescriptorSet desc_write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
 		desc_write.dstSet = r->desc_set.handle;
-		desc_write.dstBinding = 2;
-		desc_write.descriptorCount = 1;
+		desc_write.dstBinding = 3;
+		desc_write.descriptorCount = TEXTURE_COUNT;
 		desc_write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		desc_write.pImageInfo = &tex->descriptor;
+		desc_write.pImageInfo = textures->descriptors;
 
 		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &desc_write, 0, 0);
 	}
 
 	vkCmdBindIndexBuffer(cmdbuf, r->index_buffer.handle, 0, VK_INDEX_TYPE_UINT32);
-	vkCmdDrawIndexed(cmdbuf, ArrayCount(cube_indices), 1, 0, 0, 0);
+	vkCmdDrawIndexed(cmdbuf, ArrayCount(cube_indices), instance_count, 0, 0, 0);
 }
 
-Texture LoadTextureFromFile(const char *path, VkCommandPool cmdpool) {
+void LoadTextureFromFile(Textures *textures, uint slot, const char *path, VkCommandPool cmdpool) {
 	int w, h, channels;
 	u8 *pixels = stbi_load(path, &w, &h, &channels, STBI_rgb);
 	if (!pixels) {
@@ -323,7 +420,32 @@ Texture LoadTextureFromFile(const char *path, VkCommandPool cmdpool) {
 	
 	free(pixels);
 
-	return result;
+	textures->images[slot] = result.image;
+	textures->descriptors[slot] = result.descriptor;
+}
+
+void LoadTextures(Textures *textures, VkCommandPool cmdpool) {
+	LoadTextureFromFile(textures, TEXTURE_DIRT, "Assets/Textures/dirt.png", cmdpool);
+	LoadTextureFromFile(textures, TEXTURE_GRASS_SIDE, "Assets/Textures/grass_side.png", cmdpool);
+	LoadTextureFromFile(textures, TEXTURE_GRASS_TOP, "Assets/Textures/grass_top.png", cmdpool);
+	LoadTextureFromFile(textures, TEXTURE_OAK_LOG_SIDE, "Assets/Textures/log_oak.png", cmdpool);
+	LoadTextureFromFile(textures, TEXTURE_OAK_LOG_TOP, "Assets/Textures/log_oak_top.png", cmdpool);
+	LoadTextureFromFile(textures, TEXTURE_STONE, "Assets/Textures/stone.png", cmdpool);
+	LoadTextureFromFile(textures, TEXTURE_COBBLE_STONE, "Assets/Textures/cobblestone.png", cmdpool);
+	LoadTextureFromFile(textures, TEXTURE_STONE_BRICKS, "Assets/Textures/stone_bricks.png", cmdpool);
+}
+
+void ReleaseTextures(Textures *textures) {
+	for (int i = 0; i < TEXTURE_COUNT; ++i) {
+		Image image = textures->images[i];
+		VkDescriptorImageInfo descriptor = textures->descriptors[i];
+
+		Texture t;
+		t.image = image;
+		t.descriptor = descriptor;
+
+		DestroyTexture(t);
+	}
 }
 
 void NKMain() {
@@ -362,11 +484,23 @@ void NKMain() {
 		EndTempCommandBuffer(cmdpool, temp_cmdbuf);
 	}
 
-	Texture dirt = LoadTextureFromFile("Assets/Textures/dirt.png", cmdpool);
+	Textures textures;
+	LoadTextures(&textures, cmdpool);
 
 	VkPhysicalDeviceProperties pdev_props;
 	vkGetPhysicalDeviceProperties(GetPhysicalDevice(), &pdev_props);
 	Assert(pdev_props.limits.timestampComputeAndGraphics);
+
+	for (int x = 0; x < CHUNK_X; ++x) {
+		for (int z = 0; z < CHUNK_Z; ++z) {
+			blocks[x][z][0].type = BLOCK_STONE;
+			blocks[x][z][1].type = BLOCK_STONE;
+			blocks[x][z][2].type = BLOCK_STONE;
+			blocks[x][z][3].type = BLOCK_DIRT;
+			blocks[x][z][4].type = BLOCK_DIRT;
+			blocks[x][z][5].type = BLOCK_GRASS;
+		}
+	}
 
 	double cpu_time_avg = 0.0;
 	double gpu_time_avg = 0.0;
@@ -450,7 +584,7 @@ void NKMain() {
 		vkCmdSetViewport(cmdbuf, 0, 1, &viewport);
 		vkCmdSetScissor(cmdbuf, 0, 1, &scissor);
 
-		Render(&renderer, &dirt, cmdbuf);
+		Render(&renderer, &textures, cmdbuf);
 
 		vkCmdEndRendering(cmdbuf);
 		vkCmdEndQuery(cmdbuf, pipeline_queries, 0);
@@ -487,7 +621,7 @@ void NKMain() {
 
 	DestroyQueryPool(pipeline_queries);
 
-	DestroyTexture(dirt);
+	ReleaseTextures(&textures);
 	DestroyRenderer(&renderer);
 
 	DestroyImage(depth_target);
