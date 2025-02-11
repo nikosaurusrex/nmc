@@ -117,8 +117,9 @@ void PipelineBufferBarriers(VkCommandBuffer cmdbuf, VkDependencyFlags flags, VkB
 DescriptorSet CreateDescriptorSet(VkDescriptorSetLayoutBinding *bindings, u32 bindings_count);
 void FreeDescriptorSet(DescriptorSet set);
 
-Pipeline CreatePipeline(VkDescriptorSetLayout desc_set_layout, VkPipelineRenderingCreateInfo rendering_info,
+Pipeline CreateGraphicsPipeline(VkDescriptorSetLayout desc_set_layout, VkPipelineRenderingCreateInfo rendering_info,
     VkCullModeFlags cull_mode, VkBool32 depth_test, Shader *shaders, u32 shaders_count);
+Pipeline CreateComputePipeline(VkDescriptorSetLayout desc_set_layout, Shader shader);
 void DestroyPipeline(Pipeline pipeline);
 
 void CopyBuffer(VkBuffer dst, VkBuffer src, VkDeviceSize size, VkCommandPool cmdpool);

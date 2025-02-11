@@ -9,60 +9,15 @@
 #include "Math/Mat.h"
 #include "Math/NMath.h"
 
-struct Vertex {
-	vec3 pos;
-	vec3 normal;
-	vec2 uv;
-};
-
-struct BlockTexture {
-	uint sides;
-	uint top;
-	uint bot;
-};
-
-struct Block {
-	int type;
-};
-
-struct InstanceData {
-	vec3 pos;
-	BlockTexture texture;
-};
-
-struct Renderer {
-	DescriptorSet desc_set;
-	Pipeline pipeline;
-	VkCommandBuffer cmdbuf;
-	Buffer vertex_buffer;
-	Buffer index_buffer;
-	Buffer instance_buffer;
-	Buffer globals_buffer;
-};
-
-struct Globals {
-	mat4 proj_matrix;
-	mat4 view_matrix;
-};
-
-struct OrbitCamera {
-    vec3 position;
-    vec3 target;
-
-    float radius;
-    float yaw;
-    float pitch;
-
-    mat4 view_matrix;
-
-    float width;
-    float height;
-};
-
 enum {
 	CHUNK_X = 16,
 	CHUNK_Y = 16,
 	CHUNK_Z = 16,
+};
+
+enum {
+	WORLD_CHUNK_COUNT_X = 8,
+	WORLD_CHUNK_COUNT_Z = 8,
 };
 
 enum {
@@ -86,6 +41,79 @@ enum {
 	TEXTURE_STONE_BRICKS,
 
 	TEXTURE_COUNT
+};
+
+enum {
+	MAX_INSTANCE_COUNT = 1000000
+};
+
+struct Vertex {
+	vec3 pos;
+	vec3 normal;
+	vec2 uv;
+};
+
+struct FrustumInfo {
+	vec4 planes[6];
+	u32 instance_count;
+};
+
+struct BlockTexture {
+	uint sides;
+	uint top;
+	uint bot;
+};
+
+struct InstanceData {
+	vec3 pos;
+	BlockTexture texture;
+};
+
+struct Block {
+	int type;
+};
+
+struct Chunk {
+	Block blocks[CHUNK_X][CHUNK_Z][CHUNK_Y];
+	vec3 world_pos;
+};
+
+struct Renderer {
+	DescriptorSet render_desc_set;
+	DescriptorSet cull_desc_set;
+	DescriptorSet cull_pass_desc_set;
+	Pipeline render_pipeline;
+	Pipeline cull_pipeline;
+	Pipeline cull_pass_pipeline;
+	VkCommandBuffer cmdbuf;
+	Buffer vertex_buffer;
+	Buffer index_buffer;
+	Buffer instance_buffer;
+	StagingBuffer instance_staging_buffer;
+	Buffer culled_instance_buffer;
+	Buffer culled_counter_buffer;
+	Buffer indirect_buffer;
+	Buffer frustum_info_buffer;
+	Buffer globals_buffer;
+};
+
+struct Globals {
+	mat4 proj_matrix;
+	mat4 view_matrix;
+};
+
+struct OrbitCamera {
+    vec3 position;
+    vec3 target;
+
+    float radius;
+    float yaw;
+    float pitch;
+
+    mat4 proj_view_matrix;
+
+    float width;
+    float height;
 };
 
 struct Textures {
@@ -157,8 +185,7 @@ global const u32 cube_indices[] = {
 	20, 22, 23
 };
 
-global Block blocks[CHUNK_X][CHUNK_Z][CHUNK_Y];
-global InstanceData instance_data[CHUNK_X * CHUNK_Z * CHUNK_Y];
+global Chunk chunks[WORLD_CHUNK_COUNT_X][WORLD_CHUNK_COUNT_Z];
 
 global BlockTexture block_textures_map[] = {
 	{},
@@ -191,6 +218,8 @@ void UploadOrbitCameraMatrices(OrbitCamera *camera, Renderer *r, VkCommandBuffer
     mat4 proj_matrix = Perspective(PI32 / 3.0f, camera->width / camera->height, 0.01f, 1000.f);
     mat4 view_matrix = LookAt(camera->position, camera->target, vec3(0.f, 1.f, 0.f));
 
+	camera->proj_view_matrix = proj_matrix * view_matrix;
+
 	Globals globals = { proj_matrix, view_matrix };
     UpdateRendererBuffer(r->globals_buffer, sizeof(globals), &globals, cmdbuf);
 }
@@ -206,9 +235,9 @@ bool UpdateOrbitCamera(OrbitCamera *camera) {
     float strafe_speed = 0.2f;
 
     if (scroll != 0) {
-        camera->radius -= float(scroll) * .5f;
+		camera->radius -= float(scroll) * 2.0f;
 
-        camera->radius = Clamp(camera->radius, 1.f, 30.f);
+        camera->radius = Clamp(camera->radius, 1.f, 100.f);
 
         result = true;
     }
@@ -239,8 +268,8 @@ bool UpdateOrbitCamera(OrbitCamera *camera) {
         vec3 axis_x = Normalize(Cross(forward, up));
         vec3 axis_y = Normalize(Cross(axis_x, forward));
 
-        camera->target = camera->target - axis_x * mouse_delta.x * 0.01f;
-        camera->target = camera->target + axis_y * mouse_delta.y * 0.01f;
+        camera->target = camera->target - axis_x * mouse_delta.x * 0.02f;
+        camera->target = camera->target + axis_y * mouse_delta.y * 0.02f;
 
         result = true;
     }
@@ -264,13 +293,14 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 	VkFormat color_format, VkFormat depth_format) {
 	Renderer result = {};
 
+	// Graphics pipeline
 	VkDescriptorSetLayoutBinding bindings[] = {
 		{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
 		{1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
 		{2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
 		{3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, 0}
 	};
-	result.desc_set = CreateDescriptorSet(bindings, ArrayCount(bindings));
+	result.render_desc_set = CreateDescriptorSet(bindings, ArrayCount(bindings));
 
 	Shader shaders[] = {
 		{"Assets/Shaders/Core-Vert.spv", VK_SHADER_STAGE_VERTEX_BIT},
@@ -283,12 +313,50 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 	rendering_create_info.pColorAttachmentFormats = &color_format;
 	rendering_create_info.depthAttachmentFormat = depth_format;
 
-	result.pipeline = CreatePipeline(result.desc_set.layout, rendering_create_info, VK_CULL_MODE_BACK_BIT, VK_TRUE, shaders, ArrayCount(shaders));
+	result.render_pipeline = CreateGraphicsPipeline(result.render_desc_set.layout, rendering_create_info, VK_CULL_MODE_BACK_BIT, VK_TRUE, shaders, ArrayCount(shaders));
+
+	// Culling pipeline
+	VkDescriptorSetLayoutBinding culling_bindings[] = {
+		{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0},
+		{1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0},
+		{2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0},
+		{3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0}
+	};
+	result.cull_desc_set = CreateDescriptorSet(culling_bindings, ArrayCount(culling_bindings));
+
+	Shader culling_shader = {
+		"Assets/Shaders/Culling-Comp.spv", VK_SHADER_STAGE_COMPUTE_BIT
+	};
+
+	result.cull_pipeline = CreateComputePipeline(result.cull_desc_set.layout, culling_shader);
+
+	// Culling pass pipeline
+	VkDescriptorSetLayoutBinding culling_pass_bindings[] = {
+		{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0},
+		{1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0},
+	};
+	result.cull_pass_desc_set = CreateDescriptorSet(culling_pass_bindings, ArrayCount(culling_pass_bindings));
+
+	Shader culling_pass_shader = {
+		"Assets/Shaders/CullingPass-Comp.spv", VK_SHADER_STAGE_COMPUTE_BIT
+	};
+
+	result.cull_pass_pipeline = CreateComputePipeline(result.cull_pass_desc_set.layout, culling_pass_shader);
+
 	result.cmdbuf = cmdbuf;
 
 	result.vertex_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizeof(Vertex) * ArrayCount(cube_vertices), (void *)cube_vertices);
 	result.index_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, sizeof(u32) * ArrayCount(cube_indices), (void *) cube_indices);
-	result.instance_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizeof(instance_data), 0);
+	result.instance_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizeof(InstanceData) * MAX_INSTANCE_COUNT, 0);
+	result.instance_staging_buffer = CreateStagingBuffer(sizeof(InstanceData) * MAX_INSTANCE_COUNT, 0);
+	result.culled_instance_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizeof(InstanceData) * MAX_INSTANCE_COUNT, 0);
+	result.culled_counter_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizeof(u32), 0);
+
+	result.frustum_info_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(FrustumInfo), 0);
+
+	VkDrawIndexedIndirectCommand indirect_cmd = {ArrayCount(cube_indices), 0, 0, 0, 0};
+	result.indirect_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, sizeof(VkDrawIndirectCommand) + sizeof(u32), &indirect_cmd);
 
 	Globals globals = {};
 	result.globals_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(globals), &globals);
@@ -300,39 +368,190 @@ void DestroyRenderer(Renderer *r) {
 	DestroyBuffer(r->vertex_buffer);
 	DestroyBuffer(r->index_buffer);
 	DestroyBuffer(r->instance_buffer);
+	DestroyStagingBuffer(r->instance_staging_buffer);
+	DestroyBuffer(r->culled_instance_buffer);
+	DestroyBuffer(r->culled_counter_buffer);
+	DestroyBuffer(r->frustum_info_buffer);
+	DestroyBuffer(r->indirect_buffer);
 	DestroyBuffer(r->globals_buffer);
 
-	DestroyPipeline(r->pipeline);
-	FreeDescriptorSet(r->desc_set);
+	DestroyPipeline(r->render_pipeline);
+	FreeDescriptorSet(r->render_desc_set);
+	DestroyPipeline(r->cull_pipeline);
+	FreeDescriptorSet(r->cull_desc_set);
+	DestroyPipeline(r->cull_pass_pipeline);
+	FreeDescriptorSet(r->cull_pass_desc_set);
 }
 
-void Render(Renderer *r, Textures *textures, VkCommandBuffer cmdbuf) {
+u32 UpdateBlockInstances(Renderer *r, OrbitCamera *camera, VkCommandBuffer cmdbuf) {
+	InstanceData *instance_data = (InstanceData *) r->instance_staging_buffer.allocation_info.pMappedData;
+
 	u32 instance_count = 0;
-	for (int x = 0; x < CHUNK_X; ++x) {
-		for (int z = 0; z < CHUNK_Z; ++z) {
-			for (int y = 0; y < CHUNK_Y; ++y) {
-				Block b = blocks[x][z][y];
-				if (b.type != BLOCK_AIR) {
-					InstanceData *id = instance_data + instance_count;
-					id->pos = vec3(x, y, z);
-					id->texture = block_textures_map[b.type];
-					instance_count++;
+	
+	for (int cx = 0; cx < WORLD_CHUNK_COUNT_X; ++cx) {
+		for (int cz = 0; cz < WORLD_CHUNK_COUNT_Z; ++cz) {
+			Chunk c = chunks[cx][cz];
+
+			for (int x = 0; x < CHUNK_X; ++x) {
+				for (int z = 0; z < CHUNK_Z; ++z) {
+					for (int y = 0; y < CHUNK_Y; ++y) {
+						Block b = c.blocks[x][z][y];
+						if (b.type != BLOCK_AIR) {
+							InstanceData *id = instance_data + instance_count;
+							id->pos = c.world_pos + vec3(x, y, z);
+							id->texture = block_textures_map[b.type];
+							instance_count++;
+						}
+					}
 				}
 			}
 		}
 	}
 
-	UpdateRendererBuffer(r->instance_buffer, instance_count * sizeof(InstanceData), instance_data, cmdbuf);
+    VkBufferCopy copy = {};
+    copy.srcOffset = 0;
+    copy.dstOffset = 0;
+    copy.size = instance_count * sizeof(InstanceData);
+    vkCmdCopyBuffer(cmdbuf, r->instance_staging_buffer.handle, r->instance_buffer.handle, 1, &copy);
 
-	vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline.handle);
-	vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline.layout, 0, 1, &r->desc_set.handle, 0, 0);
+	vkCmdFillBuffer(cmdbuf, r->culled_counter_buffer.handle, 0, sizeof(u32), 0);
+
+	FrustumInfo frustum_info = {};
+	vec4 row0 = camera->proj_view_matrix[0];
+	vec4 row1 = camera->proj_view_matrix[1];
+	vec4 row2 = camera->proj_view_matrix[2];
+	vec4 row3 = camera->proj_view_matrix[3];
+
+	frustum_info.planes[0] = row3 + row0; // left
+	frustum_info.planes[1] = row3 - row0; // right
+	frustum_info.planes[2] = row3 + row1; // bottom
+	frustum_info.planes[3] = row3 - row1; // top
+	frustum_info.planes[4] = row3 + row2; // near
+	frustum_info.planes[5] = row3 - row2; // far
+	frustum_info.instance_count = instance_count;
+
+	UpdateRendererBuffer(r->frustum_info_buffer, sizeof(frustum_info), &frustum_info, cmdbuf);
+
+	vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, r->cull_pipeline.handle);
+	vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, r->cull_pipeline.layout, 0, 1, &r->cull_desc_set.handle, 0, 0);
+
+	if (instance_count > 0) {
+		VkDescriptorBufferInfo instance_desc = { r->instance_buffer.handle, 0, instance_count * sizeof(InstanceData) };
+
+		VkWriteDescriptorSet instance_write = {};
+		instance_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		instance_write.dstSet = r->cull_desc_set.handle;
+		instance_write.dstBinding = 0;
+		instance_write.descriptorCount = 1;
+		instance_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		instance_write.pBufferInfo = &instance_desc;
+
+		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &instance_write, 0, 0);
+	}
+
+	if (instance_count > 0) {
+		VkDescriptorBufferInfo culled_instance_desc = { r->culled_instance_buffer.handle, 0, instance_count * sizeof(InstanceData) };
+
+		VkWriteDescriptorSet culled_instance_write = {};
+		culled_instance_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		culled_instance_write.dstSet = r->cull_desc_set.handle;
+		culled_instance_write.dstBinding = 1;
+		culled_instance_write.descriptorCount = 1;
+		culled_instance_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		culled_instance_write.pBufferInfo = &culled_instance_desc;
+
+		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &culled_instance_write, 0, 0);
+	}
+
+	{
+		VkDescriptorBufferInfo culled_counter_desc = { r->culled_counter_buffer.handle, 0, VK_WHOLE_SIZE };
+
+		VkWriteDescriptorSet culled_counter_write = {};
+		culled_counter_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		culled_counter_write.dstSet = r->cull_desc_set.handle;
+		culled_counter_write.dstBinding = 2;
+		culled_counter_write.descriptorCount = 1;
+		culled_counter_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		culled_counter_write.pBufferInfo = &culled_counter_desc;
+
+		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &culled_counter_write, 0, 0);
+	}
+
+	{
+		VkDescriptorBufferInfo frustum_info_desc = { r->frustum_info_buffer.handle, 0, VK_WHOLE_SIZE };
+
+		VkWriteDescriptorSet frustum_info_write = {};
+		frustum_info_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		frustum_info_write.dstSet = r->cull_desc_set.handle;
+		frustum_info_write.dstBinding = 3;
+		frustum_info_write.descriptorCount = 1;
+		frustum_info_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		frustum_info_write.pBufferInfo = &frustum_info_desc;
+
+		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &frustum_info_write, 0, 0);
+	}
+	
+	u32 group_count = (instance_count + 63) / 64;
+	vkCmdDispatch(cmdbuf, group_count, 1, 1);
+
+	VkBufferMemoryBarrier2 cull_pass_barrier = CreateBufferBarrier(
+		r->culled_counter_buffer.handle, VK_WHOLE_SIZE, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT
+	);
+    PipelineBufferBarriers(cmdbuf, VK_DEPENDENCY_DEVICE_GROUP_BIT, &cull_pass_barrier, 1);
+
+	vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, r->cull_pass_pipeline.handle);
+	vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, r->cull_pass_pipeline.layout, 0, 1, &r->cull_pass_desc_set.handle, 0, 0);
+	
+	{
+		VkDescriptorBufferInfo culled_counter_desc = { r->culled_counter_buffer.handle, 0, VK_WHOLE_SIZE };
+
+		VkWriteDescriptorSet culled_counter_write = {};
+		culled_counter_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		culled_counter_write.dstSet = r->cull_pass_desc_set.handle;
+		culled_counter_write.dstBinding = 0;
+		culled_counter_write.descriptorCount = 1;
+		culled_counter_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		culled_counter_write.pBufferInfo = &culled_counter_desc;
+
+		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &culled_counter_write, 0, 0);
+	}
+
+	{
+		VkDescriptorBufferInfo indirect_buffer_desc = { r->indirect_buffer.handle, 0, VK_WHOLE_SIZE };
+
+		VkWriteDescriptorSet indirect_buffer_write = {};
+		indirect_buffer_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		indirect_buffer_write.dstSet = r->cull_pass_desc_set.handle;
+		indirect_buffer_write.dstBinding = 1;
+		indirect_buffer_write.descriptorCount = 1;
+		indirect_buffer_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		indirect_buffer_write.pBufferInfo = &indirect_buffer_desc;
+
+		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &indirect_buffer_write, 0, 0);
+	}
+
+	vkCmdDispatch(cmdbuf, 1, 1, 1);
+
+	VkBufferMemoryBarrier2 cull_barrier = CreateBufferBarrier(
+		r->indirect_buffer.handle, VK_WHOLE_SIZE, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+		VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT
+	);
+    PipelineBufferBarriers(cmdbuf, VK_DEPENDENCY_DEVICE_GROUP_BIT, &cull_barrier, 1);
+
+	return instance_count;
+}
+
+void Render(Renderer *r, Textures *textures, VkCommandBuffer cmdbuf, u32 instance_count) {
+	vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, r->render_pipeline.handle);
+	vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, r->render_pipeline.layout, 0, 1, &r->render_desc_set.handle, 0, 0);
 
 	{
 		VkDescriptorBufferInfo vertex_desc = { r->vertex_buffer.handle, 0, VK_WHOLE_SIZE };
 
 		VkWriteDescriptorSet vertex_write = {};
 		vertex_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		vertex_write.dstSet = r->desc_set.handle;
+		vertex_write.dstSet = r->render_desc_set.handle;
 		vertex_write.dstBinding = 0;
 		vertex_write.descriptorCount = 1;
 		vertex_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -345,7 +564,7 @@ void Render(Renderer *r, Textures *textures, VkCommandBuffer cmdbuf) {
 		VkDescriptorBufferInfo globals_buffer_desc = { r->globals_buffer.handle, 0, VK_WHOLE_SIZE };
 
 		VkWriteDescriptorSet desc_write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-		desc_write.dstSet = r->desc_set.handle;
+		desc_write.dstSet = r->render_desc_set.handle;
 		desc_write.dstBinding = 1;
 		desc_write.descriptorCount = 1;
 		desc_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -355,11 +574,11 @@ void Render(Renderer *r, Textures *textures, VkCommandBuffer cmdbuf) {
 	}
 
 	if (instance_count > 0) {
-		VkDescriptorBufferInfo instance_desc = { r->instance_buffer.handle, 0, instance_count * sizeof(InstanceData) };
+		VkDescriptorBufferInfo instance_desc = { r->culled_instance_buffer.handle, 0, instance_count * sizeof(InstanceData) };
 
 		VkWriteDescriptorSet instance_write = {};
 		instance_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		instance_write.dstSet = r->desc_set.handle;
+		instance_write.dstSet = r->render_desc_set.handle;
 		instance_write.dstBinding = 2;
 		instance_write.descriptorCount = 1;
 		instance_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -370,7 +589,7 @@ void Render(Renderer *r, Textures *textures, VkCommandBuffer cmdbuf) {
 	
 	{
 		VkWriteDescriptorSet desc_write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-		desc_write.dstSet = r->desc_set.handle;
+		desc_write.dstSet = r->render_desc_set.handle;
 		desc_write.dstBinding = 3;
 		desc_write.descriptorCount = TEXTURE_COUNT;
 		desc_write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -380,7 +599,8 @@ void Render(Renderer *r, Textures *textures, VkCommandBuffer cmdbuf) {
 	}
 
 	vkCmdBindIndexBuffer(cmdbuf, r->index_buffer.handle, 0, VK_INDEX_TYPE_UINT32);
-	vkCmdDrawIndexed(cmdbuf, ArrayCount(cube_indices), instance_count, 0, 0, 0);
+	// vkCmdDrawIndexed(cmdbuf, ArrayCount(cube_indices), instance_count, 0, 0, 0);
+	vkCmdDrawIndexedIndirect(cmdbuf, r->indirect_buffer.handle, 0, 1, sizeof(VkDrawIndirectCommand));
 }
 
 void LoadTextureFromFile(Textures *textures, uint slot, const char *path, VkCommandPool cmdpool) {
@@ -491,14 +711,24 @@ void NKMain() {
 	vkGetPhysicalDeviceProperties(GetPhysicalDevice(), &pdev_props);
 	Assert(pdev_props.limits.timestampComputeAndGraphics);
 
-	for (int x = 0; x < CHUNK_X; ++x) {
-		for (int z = 0; z < CHUNK_Z; ++z) {
-			blocks[x][z][0].type = BLOCK_STONE;
-			blocks[x][z][1].type = BLOCK_STONE;
-			blocks[x][z][2].type = BLOCK_STONE;
-			blocks[x][z][3].type = BLOCK_DIRT;
-			blocks[x][z][4].type = BLOCK_DIRT;
-			blocks[x][z][5].type = BLOCK_GRASS;
+	for (int cx = 0; cx < WORLD_CHUNK_COUNT_X; ++cx) {
+		for (int cz = 0; cz < WORLD_CHUNK_COUNT_Z; ++cz) {
+			Chunk *c = &chunks[cx][cz];
+			c->world_pos = vec3(cx * CHUNK_X, 0, cz * CHUNK_Z);
+
+			for (int x = 0; x < CHUNK_X; ++x) {
+				for (int z = 0; z < CHUNK_Z; ++z) {
+					for (int y = 0; y < CHUNK_Y; ++y) {
+						if (y < 11) {
+							c->blocks[x][z][y].type = BLOCK_STONE;
+						} else if (y < 15) {
+							c->blocks[x][z][y].type = BLOCK_DIRT;
+						} else {
+							c->blocks[x][z][y].type = BLOCK_GRASS;
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -539,6 +769,8 @@ void NKMain() {
 		if (!AcquireSwapchain(&swapchain, cmdpool, cmdbuf, color_target, depth_target)) {
 			continue;
 		}
+
+		u32 instance_count = UpdateBlockInstances(&renderer, &orbit_camera, cmdbuf);
 
 		vkCmdResetQueryPool(cmdbuf, pipeline_queries, 0, 1);
 		vkCmdBeginQuery(cmdbuf, pipeline_queries, 0, 0);
@@ -584,7 +816,7 @@ void NKMain() {
 		vkCmdSetViewport(cmdbuf, 0, 1, &viewport);
 		vkCmdSetScissor(cmdbuf, 0, 1, &scissor);
 
-		Render(&renderer, &textures, cmdbuf);
+		Render(&renderer, &textures, cmdbuf, instance_count);
 
 		vkCmdEndRendering(cmdbuf);
 		vkCmdEndQuery(cmdbuf, pipeline_queries, 0);

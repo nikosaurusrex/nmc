@@ -819,33 +819,38 @@ void FreeDescriptorSet(DescriptorSet set) {
     vkDestroyDescriptorSetLayout(vulkan_state.ldevice, set.layout, 0);
 }
 
-Pipeline CreatePipeline(VkDescriptorSetLayout desc_set_layout, VkPipelineRenderingCreateInfo rendering_info,
+VkPipelineShaderStageCreateInfo LoadShader(Shader shader) {
+	VkPipelineShaderStageCreateInfo result = {};
+
+	String code = ReadFile(shader.path);
+	if (!code.ptr) {
+		Print("Failed to read shader '%s'!\n", shader.path);
+		Exit(1);
+	}
+
+	VkShaderModuleCreateInfo module_info = {};
+	module_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+	module_info.codeSize = code.len;
+	module_info.pCode = (u32 *) code.ptr;
+
+	VkShaderModule module;
+	VK_CHECK(vkCreateShaderModule(vulkan_state.ldevice, &module_info, 0, &module));
+
+	result.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	result.stage = shader.stage;
+	result.module = module;
+	result.pName = "main";
+
+    return result;
+}
+
+Pipeline CreateGraphicsPipeline(VkDescriptorSetLayout desc_set_layout, VkPipelineRenderingCreateInfo rendering_info,
     VkCullModeFlags cull_mode, VkBool32 depth_test, Shader *shaders, u32 shaders_count) {
     Pipeline result = {};
 
     VkPipelineShaderStageCreateInfo *shader_stages = (VkPipelineShaderStageCreateInfo *) HeapAlloc(shaders_count * sizeof(VkPipelineShaderStageCreateInfo));
     for (u32 i = 0; i < shaders_count; ++i) {
-        String code = ReadFile(shaders[i].path);
-        if (!code.ptr) {
-            Print("Failed to read shader '%s'!\n", shaders[i].path);
-            Exit(1);
-        }
-
-        VkShaderModuleCreateInfo module_info = {};
-        module_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        module_info.codeSize = code.len;
-        module_info.pCode = (u32 *) code.ptr;
-
-        VkShaderModule module;
-        VK_CHECK(vkCreateShaderModule(vulkan_state.ldevice, &module_info, 0, &module));
-
-        VkPipelineShaderStageCreateInfo stage_info = {};
-        stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        stage_info.stage = shaders[i].stage;
-        stage_info.module = module;
-        stage_info.pName = "main";
-
-        shader_stages[i] = stage_info;
+        shader_stages[i] = LoadShader(shaders[i]);
     }
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly_state = {};
@@ -933,6 +938,30 @@ Pipeline CreatePipeline(VkDescriptorSetLayout desc_set_layout, VkPipelineRenderi
     }
 
     HeapFree(shader_stages);
+
+    return result;
+}
+
+Pipeline CreateComputePipeline(VkDescriptorSetLayout desc_set_layout, Shader shader) {
+    Pipeline result = {};
+
+    VkPipelineShaderStageCreateInfo stage_info = LoadShader(shader);
+
+    VkPipelineLayoutCreateInfo layout_info = {};
+    layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layout_info.setLayoutCount = 1;
+    layout_info.pSetLayouts = &desc_set_layout;
+
+    VK_CHECK(vkCreatePipelineLayout(vulkan_state.ldevice, &layout_info, 0, &result.layout));
+
+    VkComputePipelineCreateInfo pipeline_info = {};
+    pipeline_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeline_info.stage = stage_info;
+    pipeline_info.layout = result.layout;
+
+    VK_CHECK(vkCreateComputePipelines(vulkan_state.ldevice, VK_NULL_HANDLE, 1, &pipeline_info, 0, &result.handle));
+
+    vkDestroyShaderModule(vulkan_state.ldevice, stage_info.module, 0);
 
     return result;
 }

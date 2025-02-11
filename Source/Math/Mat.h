@@ -35,3 +35,5 @@ mat4 LookAt(vec3 eye, vec3 center, vec3 up);
 mat4 Scale(mat4 m, vec3 v);
 mat4 Translate(mat4 m, vec3 v);
 mat4 Rotate(mat4 m, float angle, vec3 v);
+
+mat4 operator*(mat4 a, mat4 b);

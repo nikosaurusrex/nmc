@@ -100,3 +100,12 @@ union vec4 {
         Ew = _w;
     }
 };
+
+vec4 operator+(vec4 a, vec4 b);
+vec4 operator-(vec4 a, vec4 b);
+vec4 operator*(vec4 a, vec4 b);
+vec4 operator/(vec4 a, vec4 b);
+float Dot(vec4 a, vec4 b);
+float LengthSquared(vec4 v);
+float Length(vec4 v);
+vec4 Normalize(vec4 v);
