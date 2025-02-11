@@ -83,19 +83,19 @@ vec3 Normalize(vec3 v) {
 }
 
 vec4 operator+(vec4 a, vec4 b) {
-    return vec4(a.Ew + a.Ew);
+    return vec4(a.Ew + b.Ew);
 }
 
 vec4 operator-(vec4 a, vec4 b) {
-    return vec4(a.Ew - a.Ew);
+    return vec4(a.Ew - b.Ew);
 }
 
 vec4 operator*(vec4 a, vec4 b) {
-    return vec4(a.Ew * a.Ew);
+    return vec4(a.Ew * b.Ew);
 }
 
 vec4 operator/(vec4 a, vec4 b) {
-    return vec4(a.Ew / a.Ew);
+    return vec4(a.Ew / b.Ew);
 }
 
 float Dot(vec4 a, vec4 b) {

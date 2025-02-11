@@ -6,6 +6,7 @@ struct InstanceData {
 };
 
 struct FrustumInfo {
+    float4x4 view_matrix;
     float4 planes[6];
     uint instance_count;
 };
@@ -17,15 +18,20 @@ StructuredBuffer<InstanceData> instances;
 RWStructuredBuffer<InstanceData> culled_instances;
 
 [[vk::binding(2)]]
-RWStructuredBuffer<Atomic<uint>> visible_count;
+RWStructuredBuffer<uint> visible_count;
 
 [[vk::binding(3)]]
 ConstantBuffer<FrustumInfo> frustum_info;
 
-static const float sphere_radius = 0.8660254;
+bool IsInsideFrustum(float4 pos) {
+    float4 view_pos = mul(frustum_info.view_matrix, pos);
+    const float epsilon = -1;
 
-bool IsInsideFrustum(float4 center) {
-    if (dot(frustum_info.planes[0], center) < -sphere_radius) return false;
+    for (int i = 0; i < 6; ++i) {
+        if (dot(view_pos, frustum_info.planes[i]) < epsilon) {
+            return false;
+        }
+    }
 
     return true;
 }
@@ -38,10 +44,10 @@ void CSMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     }
 
     InstanceData id = instances[idx];
-    float4 center = float4(float3(id.px, id.py, id.pz) + float3(0.5), 1.0);
 
-    if (IsInsideFrustum(center)) {
-        culled_instances[idx] = instances[idx];
-        visible_count[0].add(1);
+    if (IsInsideFrustum(float4(id.px, id.py, id.pz, 1.0))) {
+        uint count;
+        InterlockedAdd(visible_count[0], 1, count);
+        culled_instances[count] = id;
     }
 }

@@ -54,6 +54,7 @@ struct Vertex {
 };
 
 struct FrustumInfo {
+	mat4 view_matrix;
 	vec4 planes[6];
 	u32 instance_count;
 };
@@ -110,7 +111,8 @@ struct OrbitCamera {
     float yaw;
     float pitch;
 
-    mat4 proj_view_matrix;
+    mat4 proj_matrix;
+    mat4 view_matrix;
 
     float width;
     float height;
@@ -218,7 +220,8 @@ void UploadOrbitCameraMatrices(OrbitCamera *camera, Renderer *r, VkCommandBuffer
     mat4 proj_matrix = Perspective(PI32 / 3.0f, camera->width / camera->height, 0.01f, 1000.f);
     mat4 view_matrix = LookAt(camera->position, camera->target, vec3(0.f, 1.f, 0.f));
 
-	camera->proj_view_matrix = proj_matrix * view_matrix;
+	camera->proj_matrix = proj_matrix;
+	camera->view_matrix = view_matrix;
 
 	Globals globals = { proj_matrix, view_matrix };
     UpdateRendererBuffer(r->globals_buffer, sizeof(globals), &globals, cmdbuf);
@@ -417,17 +420,19 @@ u32 UpdateBlockInstances(Renderer *r, OrbitCamera *camera, VkCommandBuffer cmdbu
 	vkCmdFillBuffer(cmdbuf, r->culled_counter_buffer.handle, 0, sizeof(u32), 0);
 
 	FrustumInfo frustum_info = {};
-	vec4 row0 = camera->proj_view_matrix[0];
-	vec4 row1 = camera->proj_view_matrix[1];
-	vec4 row2 = camera->proj_view_matrix[2];
-	vec4 row3 = camera->proj_view_matrix[3];
+	mat4 proj_t = Transpose(camera->proj_matrix);
+	vec4 row0 = proj_t[0];
+	vec4 row1 = proj_t[1];
+	vec4 row2 = proj_t[2];
+	vec4 row3 = proj_t[3];
 
-	frustum_info.planes[0] = row3 + row0; // left
-	frustum_info.planes[1] = row3 - row0; // right
-	frustum_info.planes[2] = row3 + row1; // bottom
-	frustum_info.planes[3] = row3 - row1; // top
-	frustum_info.planes[4] = row3 + row2; // near
-	frustum_info.planes[5] = row3 - row2; // far
+	frustum_info.view_matrix = camera->view_matrix;
+	frustum_info.planes[0] = Normalize(row3 + row0); // left
+	frustum_info.planes[1] = Normalize(row3 - row0); // right
+	frustum_info.planes[2] = Normalize(row3 + row1); // top
+	frustum_info.planes[3] = Normalize(row3 - row1); // bottom
+	frustum_info.planes[4] = Normalize(row3 + row2); // near
+	frustum_info.planes[5] = Normalize(row3 - row2); // far
 	frustum_info.instance_count = instance_count;
 
 	UpdateRendererBuffer(r->frustum_info_buffer, sizeof(frustum_info), &frustum_info, cmdbuf);
