@@ -48,10 +48,11 @@ struct Texture {
     VkDescriptorImageInfo descriptor;
 };
 
-struct DescriptorSet {
-    VkDescriptorSet handle;
-    VkDescriptorSetLayout layout;
-    VkDescriptorPool pool;
+struct TextureArray {
+    Image *images;
+    VkDescriptorImageInfo *descriptors;
+    uint capacity;
+    uint count;
 };
 
 struct Shader {
@@ -59,9 +60,27 @@ struct Shader {
     VkShaderStageFlagBits stage;
 };
 
+struct GraphicsPipelineOptions {
+    VkDescriptorSetLayoutBinding *bindings;
+    u32 bindings_count;
+    VkFormat *color_formats;
+    u32 color_formats_count;
+    VkFormat depth_format;
+    VkPolygonMode polygon_mode;
+    VkCullModeFlags cull_mode;
+    VkFrontFace front_face;
+    VkBool32 depth_test;
+    Shader *shaders;
+    u32 shaders_count;
+};
+
 struct Pipeline {
     VkPipeline handle;
     VkPipelineLayout layout;
+    VkDescriptorSet desc_set;
+    VkDescriptorSetLayout desc_layout;
+    VkDescriptorPool desc_pool;
+    VkPipelineBindPoint bind_point;
 };
 
 struct Buffer {
@@ -104,7 +123,13 @@ void DestroyImage(Image image);
 Texture CreateTexture(u32 width, u32 height, VkFormat format, VkImageAspectFlags aspect_mask, VkImageUsageFlags usage);
 Texture CreateTextureFromPixels(u32 width, u32 height, u32 channels, VkFormat format, u8 *pixels,
     VkSamplerCreateInfo sampler_info, VkCommandPool cmdpool);
+Texture LoadTextureFromFile(const char *path, VkCommandPool cmdpool);
 void DestroyTexture(Texture tex);
+
+TextureArray CreateTextureArray(uint count);
+void AddTexture(TextureArray *ta, Texture tex);
+void LoadTextureAtSlot(TextureArray *ta, uint slot, const char *path, VkCommandPool cmdpool);
+void DestroyTextureArray(TextureArray *ta);
 
 VkImageMemoryBarrier2 CreateImageBarrier(VkImage image, VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access, VkImageLayout old_layout,
     VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access, VkImageLayout new_layout, VkImageAspectFlags aspect_mask);
@@ -114,13 +139,13 @@ VkBufferMemoryBarrier2 CreateBufferBarrier(VkBuffer buffer, VkDeviceSize size, V
     VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access);
 void PipelineBufferBarriers(VkCommandBuffer cmdbuf, VkDependencyFlags flags, VkBufferMemoryBarrier2 *barriers, u32 barriers_count);
 
-DescriptorSet CreateDescriptorSet(VkDescriptorSetLayoutBinding *bindings, u32 bindings_count);
-void FreeDescriptorSet(DescriptorSet set);
-
-Pipeline CreateGraphicsPipeline(VkDescriptorSetLayout desc_set_layout, VkPipelineRenderingCreateInfo rendering_info,
-    VkCullModeFlags cull_mode, VkBool32 depth_test, Shader *shaders, u32 shaders_count);
-Pipeline CreateComputePipeline(VkDescriptorSetLayout desc_set_layout, Shader shader);
+Pipeline CreateGraphicsPipeline(GraphicsPipelineOptions *options);
+Pipeline CreateComputePipeline(Shader shader, VkDescriptorSetLayoutBinding *bindings, u32 bindings_count);
 void DestroyPipeline(Pipeline pipeline);
+
+void BindPipeline(Pipeline *p, VkCommandBuffer cmdbuf);
+void BindBuffer(Pipeline *p, u32 binding, Buffer *buffer, VkDeviceSize size, VkDescriptorType type);
+void BindTextureArray(Pipeline *p, u32 binding, TextureArray *textures);
 
 void CopyBuffer(VkBuffer dst, VkBuffer src, VkDeviceSize size, VkCommandPool cmdpool);
 Buffer CreateBuffer(VkCommandPool cmdpool, VkBufferUsageFlags usage, VkDeviceSize size, void *data);

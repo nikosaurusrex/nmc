@@ -84,6 +84,7 @@ void *memcpy(void *_dst, void const *_src, size_t size) {
     return dst;
 }
 
+#pragma function(memset)
 void *memset(void *_ptr, int Byte, size_t size) {
     u8 *ptr = (u8 *)_ptr;
     for (u64 i = 0; i < size; i++) {
@@ -92,6 +93,7 @@ void *memset(void *_ptr, int Byte, size_t size) {
     return ptr;
 }
 
+#pragma function(memmove)
 void *memmove(void *_dst, const void *_src, size_t size) {
     u8 *dst = (u8 *)_dst;
     u8 *src = (u8 *)_src;

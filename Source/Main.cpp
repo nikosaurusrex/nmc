@@ -1,7 +1,5 @@
 #include <stdio.h>
 
-#include "ThirdParty/stb_image.h"
-
 #include "General.h"
 #include "Window/Window.h"
 #include "Graphics/NVulkan.h"
@@ -80,9 +78,6 @@ struct Chunk {
 };
 
 struct Renderer {
-	DescriptorSet render_desc_set;
-	DescriptorSet cull_desc_set;
-	DescriptorSet cull_pass_desc_set;
 	Pipeline render_pipeline;
 	Pipeline cull_pipeline;
 	Pipeline cull_pass_pipeline;
@@ -116,11 +111,6 @@ struct OrbitCamera {
 
     float width;
     float height;
-};
-
-struct Textures {
-	Image images[TEXTURE_COUNT];
-	VkDescriptorImageInfo descriptors[TEXTURE_COUNT];
 };
 
 global const Vertex cube_vertices[] = {
@@ -303,20 +293,26 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 		{2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
 		{3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, 0}
 	};
-	result.render_desc_set = CreateDescriptorSet(bindings, ArrayCount(bindings));
 
 	Shader shaders[] = {
 		{"Assets/Shaders/Core-Vert.spv", VK_SHADER_STAGE_VERTEX_BIT},
 		{"Assets/Shaders/Core-Frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT},
 	};
 
-	VkPipelineRenderingCreateInfo rendering_create_info = {};
-	rendering_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-	rendering_create_info.colorAttachmentCount = 1;
-	rendering_create_info.pColorAttachmentFormats = &color_format;
-	rendering_create_info.depthAttachmentFormat = depth_format;
+	GraphicsPipelineOptions options = {};
+	options.bindings = bindings;
+	options.bindings_count = ArrayCount(bindings);
+	options.color_formats = &color_format;
+	options.color_formats_count = 1;
+	options.depth_format = depth_format;
+	options.polygon_mode = VK_POLYGON_MODE_FILL;
+	options.cull_mode = VK_CULL_MODE_BACK_BIT;
+	options.front_face = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+	options.depth_test = VK_TRUE;
+	options.shaders = shaders;
+	options.shaders_count = ArrayCount(shaders);
 
-	result.render_pipeline = CreateGraphicsPipeline(result.render_desc_set.layout, rendering_create_info, VK_CULL_MODE_BACK_BIT, VK_TRUE, shaders, ArrayCount(shaders));
+	result.render_pipeline = CreateGraphicsPipeline(&options);
 
 	// Culling pipeline
 	VkDescriptorSetLayoutBinding culling_bindings[] = {
@@ -325,26 +321,24 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 		{2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0},
 		{3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0}
 	};
-	result.cull_desc_set = CreateDescriptorSet(culling_bindings, ArrayCount(culling_bindings));
 
 	Shader culling_shader = {
 		"Assets/Shaders/Culling-Comp.spv", VK_SHADER_STAGE_COMPUTE_BIT
 	};
 
-	result.cull_pipeline = CreateComputePipeline(result.cull_desc_set.layout, culling_shader);
+	result.cull_pipeline = CreateComputePipeline(culling_shader, culling_bindings, ArrayCount(culling_bindings));
 
 	// Culling pass pipeline
 	VkDescriptorSetLayoutBinding culling_pass_bindings[] = {
 		{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0},
 		{1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0},
 	};
-	result.cull_pass_desc_set = CreateDescriptorSet(culling_pass_bindings, ArrayCount(culling_pass_bindings));
 
 	Shader culling_pass_shader = {
 		"Assets/Shaders/CullingPass-Comp.spv", VK_SHADER_STAGE_COMPUTE_BIT
 	};
 
-	result.cull_pass_pipeline = CreateComputePipeline(result.cull_pass_desc_set.layout, culling_pass_shader);
+	result.cull_pass_pipeline = CreateComputePipeline(culling_pass_shader, culling_pass_bindings, ArrayCount(culling_pass_bindings));
 
 	result.cmdbuf = cmdbuf;
 
@@ -379,11 +373,8 @@ void DestroyRenderer(Renderer *r) {
 	DestroyBuffer(r->globals_buffer);
 
 	DestroyPipeline(r->render_pipeline);
-	FreeDescriptorSet(r->render_desc_set);
 	DestroyPipeline(r->cull_pipeline);
-	FreeDescriptorSet(r->cull_desc_set);
 	DestroyPipeline(r->cull_pass_pipeline);
-	FreeDescriptorSet(r->cull_pass_desc_set);
 }
 
 u32 UpdateBlockInstances(Renderer *r, OrbitCamera *camera, VkCommandBuffer cmdbuf) {
@@ -409,6 +400,10 @@ u32 UpdateBlockInstances(Renderer *r, OrbitCamera *camera, VkCommandBuffer cmdbu
 				}
 			}
 		}
+	}
+
+	if (instance_count == 0) {
+		return 0;
 	}
 
     VkBufferCopy copy = {};
@@ -437,65 +432,14 @@ u32 UpdateBlockInstances(Renderer *r, OrbitCamera *camera, VkCommandBuffer cmdbu
 
 	UpdateRendererBuffer(r->frustum_info_buffer, sizeof(frustum_info), &frustum_info, cmdbuf);
 
-	vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, r->cull_pipeline.handle);
-	vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, r->cull_pipeline.layout, 0, 1, &r->cull_desc_set.handle, 0, 0);
+	BindPipeline(&r->cull_pipeline, cmdbuf);
 
-	if (instance_count > 0) {
-		VkDescriptorBufferInfo instance_desc = { r->instance_buffer.handle, 0, instance_count * sizeof(InstanceData) };
+	VkDeviceSize buffer_size = instance_count * sizeof(InstanceData);
+	BindBuffer(&r->cull_pipeline, 0, &r->instance_buffer, buffer_size, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	BindBuffer(&r->cull_pipeline, 1, &r->culled_instance_buffer, buffer_size, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	BindBuffer(&r->cull_pipeline, 2, &r->culled_counter_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	BindBuffer(&r->cull_pipeline, 3, &r->frustum_info_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 
-		VkWriteDescriptorSet instance_write = {};
-		instance_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		instance_write.dstSet = r->cull_desc_set.handle;
-		instance_write.dstBinding = 0;
-		instance_write.descriptorCount = 1;
-		instance_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		instance_write.pBufferInfo = &instance_desc;
-
-		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &instance_write, 0, 0);
-	}
-
-	if (instance_count > 0) {
-		VkDescriptorBufferInfo culled_instance_desc = { r->culled_instance_buffer.handle, 0, instance_count * sizeof(InstanceData) };
-
-		VkWriteDescriptorSet culled_instance_write = {};
-		culled_instance_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		culled_instance_write.dstSet = r->cull_desc_set.handle;
-		culled_instance_write.dstBinding = 1;
-		culled_instance_write.descriptorCount = 1;
-		culled_instance_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		culled_instance_write.pBufferInfo = &culled_instance_desc;
-
-		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &culled_instance_write, 0, 0);
-	}
-
-	{
-		VkDescriptorBufferInfo culled_counter_desc = { r->culled_counter_buffer.handle, 0, VK_WHOLE_SIZE };
-
-		VkWriteDescriptorSet culled_counter_write = {};
-		culled_counter_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		culled_counter_write.dstSet = r->cull_desc_set.handle;
-		culled_counter_write.dstBinding = 2;
-		culled_counter_write.descriptorCount = 1;
-		culled_counter_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		culled_counter_write.pBufferInfo = &culled_counter_desc;
-
-		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &culled_counter_write, 0, 0);
-	}
-
-	{
-		VkDescriptorBufferInfo frustum_info_desc = { r->frustum_info_buffer.handle, 0, VK_WHOLE_SIZE };
-
-		VkWriteDescriptorSet frustum_info_write = {};
-		frustum_info_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		frustum_info_write.dstSet = r->cull_desc_set.handle;
-		frustum_info_write.dstBinding = 3;
-		frustum_info_write.descriptorCount = 1;
-		frustum_info_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		frustum_info_write.pBufferInfo = &frustum_info_desc;
-
-		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &frustum_info_write, 0, 0);
-	}
-	
 	u32 group_count = (instance_count + 63) / 64;
 	vkCmdDispatch(cmdbuf, group_count, 1, 1);
 
@@ -505,36 +449,9 @@ u32 UpdateBlockInstances(Renderer *r, OrbitCamera *camera, VkCommandBuffer cmdbu
 	);
     PipelineBufferBarriers(cmdbuf, VK_DEPENDENCY_DEVICE_GROUP_BIT, &cull_pass_barrier, 1);
 
-	vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, r->cull_pass_pipeline.handle);
-	vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, r->cull_pass_pipeline.layout, 0, 1, &r->cull_pass_desc_set.handle, 0, 0);
-	
-	{
-		VkDescriptorBufferInfo culled_counter_desc = { r->culled_counter_buffer.handle, 0, VK_WHOLE_SIZE };
-
-		VkWriteDescriptorSet culled_counter_write = {};
-		culled_counter_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		culled_counter_write.dstSet = r->cull_pass_desc_set.handle;
-		culled_counter_write.dstBinding = 0;
-		culled_counter_write.descriptorCount = 1;
-		culled_counter_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		culled_counter_write.pBufferInfo = &culled_counter_desc;
-
-		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &culled_counter_write, 0, 0);
-	}
-
-	{
-		VkDescriptorBufferInfo indirect_buffer_desc = { r->indirect_buffer.handle, 0, VK_WHOLE_SIZE };
-
-		VkWriteDescriptorSet indirect_buffer_write = {};
-		indirect_buffer_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		indirect_buffer_write.dstSet = r->cull_pass_desc_set.handle;
-		indirect_buffer_write.dstBinding = 1;
-		indirect_buffer_write.descriptorCount = 1;
-		indirect_buffer_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		indirect_buffer_write.pBufferInfo = &indirect_buffer_desc;
-
-		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &indirect_buffer_write, 0, 0);
-	}
+	BindPipeline(&r->cull_pass_pipeline, cmdbuf);
+	BindBuffer(&r->cull_pass_pipeline, 0, &r->culled_counter_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	BindBuffer(&r->cull_pass_pipeline, 1, &r->indirect_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
 	vkCmdDispatch(cmdbuf, 1, 1, 1);
 
@@ -547,130 +464,30 @@ u32 UpdateBlockInstances(Renderer *r, OrbitCamera *camera, VkCommandBuffer cmdbu
 	return instance_count;
 }
 
-void Render(Renderer *r, Textures *textures, VkCommandBuffer cmdbuf, u32 instance_count) {
-	vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, r->render_pipeline.handle);
-	vkCmdBindDescriptorSets(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, r->render_pipeline.layout, 0, 1, &r->render_desc_set.handle, 0, 0);
-
-	{
-		VkDescriptorBufferInfo vertex_desc = { r->vertex_buffer.handle, 0, VK_WHOLE_SIZE };
-
-		VkWriteDescriptorSet vertex_write = {};
-		vertex_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		vertex_write.dstSet = r->render_desc_set.handle;
-		vertex_write.dstBinding = 0;
-		vertex_write.descriptorCount = 1;
-		vertex_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		vertex_write.pBufferInfo = &vertex_desc;
-
-		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &vertex_write, 0, 0);
+void Render(Renderer *r, TextureArray *textures, VkCommandBuffer cmdbuf, u32 instance_count) {
+	if (instance_count == 0) {
+		return;
 	}
 
-	{
-		VkDescriptorBufferInfo globals_buffer_desc = { r->globals_buffer.handle, 0, VK_WHOLE_SIZE };
-
-		VkWriteDescriptorSet desc_write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-		desc_write.dstSet = r->render_desc_set.handle;
-		desc_write.dstBinding = 1;
-		desc_write.descriptorCount = 1;
-		desc_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		desc_write.pBufferInfo = &globals_buffer_desc;
-
-		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &desc_write, 0, 0);
-	}
-
-	if (instance_count > 0) {
-		VkDescriptorBufferInfo instance_desc = { r->culled_instance_buffer.handle, 0, instance_count * sizeof(InstanceData) };
-
-		VkWriteDescriptorSet instance_write = {};
-		instance_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		instance_write.dstSet = r->render_desc_set.handle;
-		instance_write.dstBinding = 2;
-		instance_write.descriptorCount = 1;
-		instance_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		instance_write.pBufferInfo = &instance_desc;
-
-		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &instance_write, 0, 0);
-	}
-	
-	{
-		VkWriteDescriptorSet desc_write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-		desc_write.dstSet = r->render_desc_set.handle;
-		desc_write.dstBinding = 3;
-		desc_write.descriptorCount = TEXTURE_COUNT;
-		desc_write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		desc_write.pImageInfo = textures->descriptors;
-
-		vkUpdateDescriptorSets(GetLogicalDevice(), 1, &desc_write, 0, 0);
-	}
+	BindPipeline(&r->render_pipeline, cmdbuf);
+	BindBuffer(&r->render_pipeline, 0, &r->vertex_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	BindBuffer(&r->render_pipeline, 1, &r->globals_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	BindBuffer(&r->render_pipeline, 2, &r->culled_instance_buffer, instance_count * sizeof(InstanceData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	BindTextureArray(&r->render_pipeline, 3, textures);
 
 	vkCmdBindIndexBuffer(cmdbuf, r->index_buffer.handle, 0, VK_INDEX_TYPE_UINT32);
-	// vkCmdDrawIndexed(cmdbuf, ArrayCount(cube_indices), instance_count, 0, 0, 0);
 	vkCmdDrawIndexedIndirect(cmdbuf, r->indirect_buffer.handle, 0, 1, sizeof(VkDrawIndirectCommand));
 }
 
-void LoadTextureFromFile(Textures *textures, uint slot, const char *path, VkCommandPool cmdpool) {
-	int w, h, channels;
-	u8 *pixels = stbi_load(path, &w, &h, &channels, STBI_rgb);
-	if (!pixels) {
-		Print("Failed to load texture '%s'!\n", path);
-		Exit(1);
-	}
-
-	VkSamplerCreateInfo sampler_info = {};
-	sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-	sampler_info.minFilter = VK_FILTER_NEAREST;
-	sampler_info.magFilter = VK_FILTER_NEAREST;
-	sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-	sampler_info.maxLod = 1.0f;
-
-	Texture result;
-	if (channels == 3) {
-		u8 *rgba_pixels = (u8 *)HeapAlloc(w * h * 4);
-		for (u32 i = 0; i < w * h; ++i) {
-			u32 pixel_idx = i * 3;
-			u32 rgba_idx = i * 4;
-
-			rgba_pixels[rgba_idx] = pixels[pixel_idx];
-			rgba_pixels[rgba_idx + 1] = pixels[pixel_idx + 1];
-			rgba_pixels[rgba_idx + 2] = pixels[pixel_idx + 2];
-			rgba_pixels[rgba_idx + 3] = 255;
-		}
-
-		result = CreateTextureFromPixels(w, h, 4, VK_FORMAT_R8G8B8A8_UNORM, rgba_pixels, sampler_info, cmdpool);
-
-		HeapFree(rgba_pixels);
-	} else {
-		result = CreateTextureFromPixels(w, h, channels, VK_FORMAT_R8G8B8A8_UNORM, pixels, sampler_info, cmdpool);
-	}
-	
-	free(pixels);
-
-	textures->images[slot] = result.image;
-	textures->descriptors[slot] = result.descriptor;
-}
-
-void LoadTextures(Textures *textures, VkCommandPool cmdpool) {
-	LoadTextureFromFile(textures, TEXTURE_DIRT, "Assets/Textures/dirt.png", cmdpool);
-	LoadTextureFromFile(textures, TEXTURE_GRASS_SIDE, "Assets/Textures/grass_side.png", cmdpool);
-	LoadTextureFromFile(textures, TEXTURE_GRASS_TOP, "Assets/Textures/grass_top.png", cmdpool);
-	LoadTextureFromFile(textures, TEXTURE_OAK_LOG_SIDE, "Assets/Textures/log_oak.png", cmdpool);
-	LoadTextureFromFile(textures, TEXTURE_OAK_LOG_TOP, "Assets/Textures/log_oak_top.png", cmdpool);
-	LoadTextureFromFile(textures, TEXTURE_STONE, "Assets/Textures/stone.png", cmdpool);
-	LoadTextureFromFile(textures, TEXTURE_COBBLE_STONE, "Assets/Textures/cobblestone.png", cmdpool);
-	LoadTextureFromFile(textures, TEXTURE_STONE_BRICKS, "Assets/Textures/stone_bricks.png", cmdpool);
-}
-
-void ReleaseTextures(Textures *textures) {
-	for (int i = 0; i < TEXTURE_COUNT; ++i) {
-		Image image = textures->images[i];
-		VkDescriptorImageInfo descriptor = textures->descriptors[i];
-
-		Texture t;
-		t.image = image;
-		t.descriptor = descriptor;
-
-		DestroyTexture(t);
-	}
+void LoadTextures(TextureArray *textures, VkCommandPool cmdpool) {
+	LoadTextureAtSlot(textures, TEXTURE_DIRT, "Assets/Textures/dirt.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_GRASS_SIDE, "Assets/Textures/grass_side.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_GRASS_TOP, "Assets/Textures/grass_top.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_OAK_LOG_SIDE, "Assets/Textures/log_oak.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_OAK_LOG_TOP, "Assets/Textures/log_oak_top.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_STONE, "Assets/Textures/stone.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_COBBLE_STONE, "Assets/Textures/cobblestone.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_STONE_BRICKS, "Assets/Textures/stone_bricks.png", cmdpool);
 }
 
 void NKMain() {
@@ -709,7 +526,7 @@ void NKMain() {
 		EndTempCommandBuffer(cmdpool, temp_cmdbuf);
 	}
 
-	Textures textures;
+	TextureArray textures = CreateTextureArray(TEXTURE_COUNT);
 	LoadTextures(&textures, cmdpool);
 
 	VkPhysicalDeviceProperties pdev_props;
@@ -858,7 +675,7 @@ void NKMain() {
 
 	DestroyQueryPool(pipeline_queries);
 
-	ReleaseTextures(&textures);
+	DestroyTextureArray(&textures);
 	DestroyRenderer(&renderer);
 
 	DestroyImage(depth_target);
