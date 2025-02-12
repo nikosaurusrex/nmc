@@ -66,8 +66,11 @@ union vec3 {
 
 vec3 operator+(vec3 a, vec3 b);
 vec3 operator-(vec3 a, vec3 b);
+vec3 operator+=(vec3 &a, vec3 b);
+vec3 operator-=(vec3 &a, vec3 b);
 vec3 operator*(vec3 a, float s);
 vec3 operator*(float s, vec3 a);
+vec3 operator*=(vec3 &a, float s);
 vec3 operator/(vec3 a, float s);
 
 float Dot(vec3 a, vec3 b);

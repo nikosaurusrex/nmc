@@ -1,9 +1,3 @@
-struct Vertex {
-    float px, py, pz;
-    float nx, ny, nz;
-    float u, v;
-};
-
 struct Globals {
     float4x4 proj_matrix;
     float4x4 view_matrix;
@@ -11,9 +5,8 @@ struct Globals {
 
 struct InstanceData {
     float px, py, pz;
+    uint side;
     uint texture;
-    uint texture_top;
-    uint texture_bot;
 };
 
 struct VSOutput {
@@ -23,42 +16,95 @@ struct VSOutput {
 };
 
 [[vk::binding(0)]]
-StructuredBuffer<Vertex> vertices;
-
-[[vk::binding(1)]]
 ConstantBuffer<Globals> globals;
 
-[[vk::binding(2)]]
+[[vk::binding(1)]]
 StructuredBuffer<InstanceData> instances;
 
-[[vk::binding(3)]]
+[[vk::binding(2)]]
 Texture2D textures[2];
 
-[[vk::binding(3)]]
+[[vk::binding(2)]]
 SamplerState samplers[2];
+
+static const float3 positions[6][4] = {
+    { // top
+        float3(0.0, 1.0, 0.0),
+        float3(0.0, 1.0, 1.0),
+        float3(1.0, 1.0, 1.0),
+        float3(1.0, 1.0, 0.0)
+    },
+    { // bot
+        float3(0.0, 0.0, 1.0),
+        float3(0.0, 0.0, 0.0),
+        float3(1.0, 0.0, 0.0),
+        float3(1.0, 0.0, 1.0)
+    },
+    { // west
+        float3(0.0, 1.0, 0.0),
+        float3(0.0, 0.0, 0.0),
+        float3(0.0, 0.0, 1.0),
+        float3(0.0, 1.0, 1.0)
+    },
+    { // east
+        float3(1.0, 1.0, 1.0),
+        float3(1.0, 0.0, 1.0),
+        float3(1.0, 0.0, 0.0),
+        float3(1.0, 1.0, 0.0)
+    },
+    { // north
+        float3(0.0, 1.0, 1.0),
+        float3(0.0, 0.0, 1.0),
+        float3(1.0, 0.0, 1.0),
+        float3(1.0, 1.0, 1.0)
+    },
+    { // south
+        float3(1.0, 1.0, 0.0),
+        float3(1.0, 0.0, 0.0),
+        float3(0.0, 0.0, 0.0),
+        float3(0.0, 1.0, 0.0)
+    }
+};
+
+static const float3 normals[6] = {
+    float3(0.0, 1.0, 0.0),
+    float3(0.0, -1.0, 0.0),
+    float3(-1.0, 0.0, 0.0),
+    float3(1.0, 0.0, 0.0),
+    float3(0.0, 0.0, 1.0),
+    float3(0.0, 0.0, -1.0)
+};
+
+static const float2 uvs[4] = {
+    float2(0.0, 0.0),
+    float2(0.0, 1.0),
+    float2(1.0, 1.0),
+    float2(1.0, 0.0)
+};
+
+static const uint indices[] = {
+    0, 1, 2,
+    0, 2, 3
+};
 
 [shader("vertex")]
 VSOutput VSMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID) {
     VSOutput result;
 
     InstanceData instance = instances[instanceID];
-    Vertex v = vertices[vertexID];
-    float4 pos = float4(v.px + instance.px, v.py + instance.py, v.pz + instance.pz, 1.0);
-    float3 normal = float3(v.nx, v.ny, v.nz);
+    uint index = indices[vertexID];
+    float3 vert_pos = positions[instance.side][index];
+    float3 normal = normals[instance.side];
+    float2 uv = uvs[index];
+
+    float3 instance_pos = float3(instance.px, instance.py, instance.pz);
+    float4 pos = float4(vert_pos + instance_pos, 1.0);
 
     float4 view_pos = mul(globals.view_matrix, pos);
     result.position = mul(globals.proj_matrix, view_pos);
-    result.uv = float2(v.u, v.v);
+    result.uv = uv;
 
-    uint texture_index;
-    if (normal.y > 0.5) {
-        texture_index = instance.texture_top;
-    } else if (normal.y < -0.5) {
-        texture_index = instance.texture_bot;
-    } else {
-        texture_index = instance.texture;
-    }
-    result.texture = texture_index;
+    result.texture = instance.texture;
 
     return result;
 }

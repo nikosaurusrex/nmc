@@ -1,8 +1,7 @@
 struct InstanceData {
     float px, py, pz;
+    uint side;
     uint texture;
-    uint texture_top;
-    uint texture_bot;
 };
 
 struct FrustumInfo {
@@ -25,7 +24,7 @@ ConstantBuffer<FrustumInfo> frustum_info;
 
 bool IsInsideFrustum(float4 pos) {
     float4 view_pos = mul(frustum_info.view_matrix, pos);
-    const float epsilon = -1;
+    const float epsilon = -2;
 
     for (int i = 0; i < 6; ++i) {
         if (dot(view_pos, frustum_info.planes[i]) < epsilon) {

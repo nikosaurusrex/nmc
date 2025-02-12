@@ -34,3 +34,7 @@ union quat {
         z = n.z * Sin(th);
     }
 };
+
+quat Invert(quat q);
+quat operator*(quat q, quat p);
+vec3 operator*(quat q, vec3 v);

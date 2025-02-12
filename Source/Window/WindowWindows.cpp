@@ -23,6 +23,8 @@ static LRESULT CALLBACK WindowProc(HWND handle, UINT umsg, WPARAM wparam, LPARAM
             BeginPaint(handle, &ps);
             EndPaint(handle, &ps);
         } break;
+        case WM_SETCURSOR: {
+        } break;
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN: {
             if (win->key_callback) {
@@ -329,10 +331,30 @@ void SetWindowTitle(Window *win, const char *title) {
 
 void SetCursorToArrow() {
     SetCursor(cursor_handles[0]);
+    ClipCursor(0);
 }
 
 void SetCursorToPointer() {
     SetCursor(cursor_handles[1]);
+    ClipCursor(0);
+}
+
+void SetCursorToNone(Window *win) {
+    SetCursor(0);
+
+    RECT rect;
+    GetClientRect(win->handle, &rect);
+    POINT ul = { rect.left, rect.top };
+    POINT lr = { rect.right, rect.bottom };
+
+    ClientToScreen(win->handle, &ul);
+    ClientToScreen(win->handle, &lr);
+
+    rect.left = ul.x;
+    rect.top = ul.y;
+    rect.right = lr.x;
+    rect.bottom = lr.y;
+    ClipCursor(&rect);
 }
 
 char *GetTextInput(int *len) {

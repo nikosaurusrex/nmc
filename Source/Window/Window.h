@@ -70,6 +70,7 @@ void SetWindowTitle(Window *win, const char *title);
 
 void SetCursorToArrow();
 void SetCursorToPointer();
+void SetCursorToNone(Window *win);
 
 char *GetTextInput(int *len);
 b8 IsKeyDown(u8 key);

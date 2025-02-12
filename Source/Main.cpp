@@ -5,6 +5,7 @@
 #include "Graphics/NVulkan.h"
 #include "Math/Vec.h"
 #include "Math/Mat.h"
+#include "Math/Quat.h"
 #include "Math/NMath.h"
 
 enum {
@@ -15,7 +16,17 @@ enum {
 
 enum {
 	WORLD_CHUNK_COUNT_X = 8,
+	WORLD_CHUNK_COUNT_Y = 1,
 	WORLD_CHUNK_COUNT_Z = 8,
+};
+
+enum {
+	SIDE_TOP,
+	SIDE_BOT,
+	SIDE_WEST,
+	SIDE_EAST,
+	SIDE_NORTH,
+	SIDE_SOUTH
 };
 
 enum {
@@ -25,7 +36,9 @@ enum {
 	BLOCK_OAK_LOG,
 	BLOCK_STONE,
 	BLOCK_COBBLE_STONE,
-	BLOCK_STONE_BRICKS
+	BLOCK_STONE_BRICKS,
+
+	BLOCK_COUNT
 };
 
 enum {
@@ -42,13 +55,7 @@ enum {
 };
 
 enum {
-	MAX_INSTANCE_COUNT = 1000000
-};
-
-struct Vertex {
-	vec3 pos;
-	vec3 normal;
-	vec2 uv;
+	MAX_INSTANCE_COUNT = 10000000
 };
 
 struct FrustumInfo {
@@ -57,19 +64,14 @@ struct FrustumInfo {
 	u32 instance_count;
 };
 
-struct BlockTexture {
-	uint sides;
-	uint top;
-	uint bot;
-};
-
 struct InstanceData {
 	vec3 pos;
-	BlockTexture texture;
+	u32 side;
+	u32 texture;
 };
 
 struct Block {
-	int type;
+	u8 type;
 };
 
 struct Chunk {
@@ -82,8 +84,6 @@ struct Renderer {
 	Pipeline cull_pipeline;
 	Pipeline cull_pass_pipeline;
 	VkCommandBuffer cmdbuf;
-	Buffer vertex_buffer;
-	Buffer index_buffer;
 	Buffer instance_buffer;
 	StagingBuffer instance_staging_buffer;
 	Buffer culled_instance_buffer;
@@ -98,188 +98,128 @@ struct Globals {
 	mat4 view_matrix;
 };
 
-struct OrbitCamera {
-    vec3 position;
-    vec3 target;
+struct Camera {
+	mat4 proj_matrix;
+	mat4 view_matrix;
 
-    float radius;
-    float yaw;
-    float pitch;
+	vec3 front;
 
-    mat4 proj_matrix;
-    mat4 view_matrix;
-
-    float width;
-    float height;
+	float width;
+	float height;
 };
 
-global const Vertex cube_vertices[] = {
-	// back
-	{vec3(1.0f, 1.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f), vec2(0.0f, 0.0f)},
-	{vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f), vec2(0.0f, 1.0f)},
-	{vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f), vec2(1.0f, 1.0f)},
-	{vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f), vec2(1.0f, 0.0f)},
+struct Player {
+	vec3 position;
+	vec3 velocity;
+	vec3 acceleration;
 
-	// bot
-	{vec3(0.0f, 0.0f, 1.0f), vec3(0.0f, -1.0f, 0.0f), vec2(0.0f, 0.0f)},
-	{vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f), vec2(0.0f, 1.0f)},
-	{vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f), vec2(1.0f, 1.0f)},
-	{vec3(1.0f, 0.0f, 1.0f), vec3(0.0f, -1.0f, 0.0f), vec2(1.0f, 0.0f)},
+	float yaw;
+	float pitch;
 
-	// top
-	{vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f), vec2(0.0f, 0.0f)},
-	{vec3(0.0f, 1.0f, 1.0f), vec3(0.0f, 1.0f, 0.0f), vec2(0.0f, 1.0f)},
-	{vec3(1.0f, 1.0f, 1.0f), vec3(0.0f, 1.0f, 0.0f), vec2(1.0f, 1.0f)},
-	{vec3(1.0f, 1.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f), vec2(1.0f, 0.0f)},
+	b32 on_ground;
 
-	// right
-	{vec3(1.0f, 1.0f, 1.0f), vec3(1.0f, 0.0f, 0.0f), vec2(0.0f, 0.0f)},
-	{vec3(1.0f, 0.0f, 1.0f), vec3(1.0f, 0.0f, 0.0f), vec2(0.0f, 1.0f)},
-	{vec3(1.0f, 0.0f, 0.0f), vec3(1.0f, 0.0f, 0.0f), vec2(1.0f, 1.0f)},
-	{vec3(1.0f, 1.0f, 0.0f), vec3(1.0f, 0.0f, 0.0f), vec2(1.0f, 0.0f)},
-
-	// left
-	{vec3(0.0f, 1.0f, 0.0f), vec3(-1.0f, 0.0f, 0.0f), vec2(0.0f, 0.0f)},
-	{vec3(0.0f, 0.0f, 0.0f), vec3(-1.0f, 0.0f, 0.0f), vec2(0.0f, 1.0f)},
-	{vec3(0.0f, 0.0f, 1.0f), vec3(-1.0f, 0.0f, 0.0f), vec2(1.0f, 1.0f)},
-	{vec3(0.0f, 1.0f, 1.0f), vec3(-1.0f, 0.0f, 0.0f), vec2(1.0f, 0.0f)},
-
-	// front
-	{vec3(0.0f, 1.0f, 1.0f), vec3(0.0f, 0.0f, 1.0f), vec2(0.0f, 0.0f)},
-	{vec3(0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, 1.0f), vec2(0.0f, 1.0f)},
-	{vec3(1.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, 1.0f), vec2(1.0f, 1.0f)},
-	{vec3(1.0f, 1.0f, 1.0f), vec3(0.0f, 0.0f, 1.0f), vec2(1.0f, 0.0f)},
+	Camera camera;
 };
 
-global const u32 cube_indices[] = {
-	// back
-	0, 1, 2,
-	0, 2, 3,
+global Chunk chunks[WORLD_CHUNK_COUNT_X][WORLD_CHUNK_COUNT_Z][WORLD_CHUNK_COUNT_Y];
 
-	// bottom
-	4, 5, 6,
-	4, 6, 7,
-
-	// top
-	8, 9, 10,
-	8, 10, 11,
-
-	// right
-	12, 13, 14,
-	12, 14, 15,
-
-	// left
-	16, 17, 18,
-	16, 18, 19,
-
-	// front
-	20, 21, 22,
-	20, 22, 23
-};
-
-global Chunk chunks[WORLD_CHUNK_COUNT_X][WORLD_CHUNK_COUNT_Z];
-
-global BlockTexture block_textures_map[] = {
+global u32 block_textures_map[BLOCK_COUNT][6] = {
 	{},
-	{TEXTURE_DIRT, TEXTURE_DIRT, TEXTURE_DIRT},
-	{TEXTURE_GRASS_SIDE, TEXTURE_GRASS_TOP, TEXTURE_DIRT},
-	{TEXTURE_OAK_LOG_SIDE, TEXTURE_OAK_LOG_TOP, TEXTURE_OAK_LOG_TOP},
-	{TEXTURE_STONE, TEXTURE_STONE, TEXTURE_STONE},
-	{TEXTURE_COBBLE_STONE, TEXTURE_COBBLE_STONE, TEXTURE_COBBLE_STONE},
-	{TEXTURE_STONE_BRICKS, TEXTURE_STONE_BRICKS, TEXTURE_STONE_BRICKS},
+	{TEXTURE_DIRT, TEXTURE_DIRT, TEXTURE_DIRT, TEXTURE_DIRT, TEXTURE_DIRT, TEXTURE_DIRT},
+	{TEXTURE_GRASS_TOP, TEXTURE_DIRT, TEXTURE_GRASS_SIDE, TEXTURE_GRASS_SIDE, TEXTURE_GRASS_SIDE, TEXTURE_GRASS_SIDE},
+	{TEXTURE_OAK_LOG_TOP, TEXTURE_OAK_LOG_TOP, TEXTURE_OAK_LOG_SIDE, TEXTURE_OAK_LOG_SIDE, TEXTURE_OAK_LOG_SIDE, TEXTURE_OAK_LOG_SIDE},
+	{TEXTURE_STONE, TEXTURE_STONE, TEXTURE_STONE, TEXTURE_STONE, TEXTURE_STONE, TEXTURE_STONE},
+	{TEXTURE_COBBLE_STONE, TEXTURE_COBBLE_STONE, TEXTURE_COBBLE_STONE, TEXTURE_COBBLE_STONE, TEXTURE_COBBLE_STONE, TEXTURE_COBBLE_STONE},
+	{TEXTURE_STONE_BRICKS, TEXTURE_STONE_BRICKS, TEXTURE_STONE_BRICKS, TEXTURE_STONE_BRICKS, TEXTURE_STONE_BRICKS, TEXTURE_STONE_BRICKS},
 };
 
-OrbitCamera CreateOrbitCamera() {
-    OrbitCamera result = {};
+global const Block air_block = { BLOCK_AIR };
 
-    result.position = vec3(0.f, 0.f, -10.f);
-    result.target = vec3(0.f);
-    result.radius = 10.f;
-    result.yaw = 0.f;
-    result.pitch = 0.f;
+Player CreatePlayer() {
+	Player result = {};
 
-    return result;
+	result.position = vec3(10.0, 14.0f, 10.0f);
+	result.velocity = vec3(0);
+	result.acceleration = vec3(0);
+	result.yaw = 125.0f;
+	result.pitch = 0;
+	result.on_ground = 1;
+
+	return result;
 }
 
-void ResizeOrbitCamera(OrbitCamera *camera, float width, float height) {
-    camera->width = width;
-    camera->height = height;
+void ResizePlayerCamera(Camera *c, float w, float h) {
+	c->width = w;
+	c->height = h;
+
+    mat4 proj_matrix = Perspective(PI32 / 3.0f, c->width / c->height, 0.01f, 1000.f);
+	c->proj_matrix = proj_matrix;
 }
 
-void UploadOrbitCameraMatrices(OrbitCamera *camera, Renderer *r, VkCommandBuffer cmdbuf) {
-    mat4 proj_matrix = Perspective(PI32 / 3.0f, camera->width / camera->height, 0.01f, 1000.f);
-    mat4 view_matrix = LookAt(camera->position, camera->target, vec3(0.f, 1.f, 0.f));
+void UploadPlayerCameraMatrices(Player *p, Renderer *r, VkCommandBuffer cmdbuf) {
+	Camera *c = &p->camera;
 
-	camera->proj_matrix = proj_matrix;
-	camera->view_matrix = view_matrix;
+	vec3 pos = p->position + vec3(0, 1.6f, 0);
+	mat4 view_matrix = LookAt(pos, pos + c->front, vec3(0, 1, 0));
 
-	Globals globals = { proj_matrix, view_matrix };
+	c->view_matrix = view_matrix;
+
+	Globals globals = { c->proj_matrix, view_matrix };
     UpdateRendererBuffer(r->globals_buffer, sizeof(globals), &globals, cmdbuf);
 }
 
-bool UpdateOrbitCamera(OrbitCamera *camera) {
-    bool result = false;
-
-	int scroll = GetMouseScrollDelta();
-    Int2 mouse_pos = GetMousePosition();
+void UpdatePlayer(Player *p, float df) {
     Int2 mouse_delta = GetMouseDeltaPosition();
 
-    float border_threshold = 20.0f;
-    float strafe_speed = 0.2f;
+	if (mouse_delta.x != 0 || mouse_delta.y != 0) {
+		p->yaw += mouse_delta.x * 0.01f;
+		p->pitch -= mouse_delta.y * 0.01f;
 
-    if (scroll != 0) {
-		camera->radius -= float(scroll) * 2.0f;
+		p->yaw = FMod(p->yaw, 360);
+		p->pitch = Clamp(p->pitch, -89.0f, 89.0f);
 
-        camera->radius = Clamp(camera->radius, 1.f, 100.f);
+		vec3 front;
+		front.x = Cos(ToRadians(p->yaw)) * Cos(ToRadians(p->pitch));
+		front.y = Sin(ToRadians(p->pitch));
+		front.z = Sin(ToRadians(p->yaw)) * Cos(ToRadians(p->pitch));
+		front = Normalize(front);
 
-        result = true;
-    }
+		p->camera.front = front;
+	}
 
-    if (IsButtonDown(MOUSE_BUTTON_LEFT)) {
-        camera->yaw += mouse_delta.x * 0.01f;
-        camera->pitch += mouse_delta.y * 0.01f;
+	p->acceleration = vec3(0);
 
-        camera->yaw = FMod(camera->yaw, 2.f * PI32);
+	vec3 front = p->camera.front;
+	float speed = df;
+	if (IsKeyDown(KEY_W)) {
+		p->acceleration += front * speed;
+	}
+	if (IsKeyDown(KEY_S)) {
+		p->acceleration -= front * speed;
+	}
+	if (IsKeyDown(KEY_A)) {
+		vec3 right = Cross(front, vec3(0, 1, 0));
+		p->acceleration -= right * speed;
+	}
+	if (IsKeyDown(KEY_D)) {
+		vec3 right = Cross(front, vec3(0, 1, 0));
+		p->acceleration += right * speed;
+	}
+	p->acceleration.y = -0.01f;
+	if (IsKeyDown(KEY_SPACE) && p->on_ground) {
+		p->velocity.y = 0.2f;
+		p->on_ground = 0;
+	}
 
-        const float eps = 0.01f;
+	p->velocity += p->acceleration;
+	p->velocity *= 0.9;
+	p->position += p->velocity;
 
-        if (camera->pitch >= PI32 / 2.f - eps) {
-            camera->pitch = PI32 / 2.f - eps;
-        }
-
-        if (camera->pitch <= -(PI32 / 2.f - eps)) {
-            camera->pitch = -(PI32 / 2.f - eps);
-        }
-
-        result = true;
-    }
-
-    if (IsButtonDown(MOUSE_BUTTON_RIGHT)) {
-        vec3 up = vec3(0.0f, 1.0f, 0.0f);
-        vec3 forward = Normalize(camera->target - camera->position);
-
-        vec3 axis_x = Normalize(Cross(forward, up));
-        vec3 axis_y = Normalize(Cross(axis_x, forward));
-
-        camera->target = camera->target - axis_x * mouse_delta.x * 0.02f;
-        camera->target = camera->target + axis_y * mouse_delta.y * 0.02f;
-
-        result = true;
-    }
-
-    if (result) {
-        float y = camera->target.y + Sin(camera->pitch) * camera->radius;
-        float h = Cos(camera->pitch) * camera->radius;
-
-        float x = camera->target.x + Sin(-camera->yaw) * h;
-        float z = camera->target.z + Cos(-camera->yaw) * h;
-
-        vec3 pos = vec3(x, y, z);
-
-        camera->position = pos;
-    }
-
-    return result;
+	if (p->position.y <= 14) {
+		p->position.y = 14;
+		p->velocity.y = 0;
+		p->on_ground = 1;
+	}
 }
 
 Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
@@ -288,10 +228,9 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 
 	// Graphics pipeline
 	VkDescriptorSetLayoutBinding bindings[] = {
-		{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
-		{1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
-		{2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
-		{3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, 0}
+		{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
+		{1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
+		{2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, 0}
 	};
 
 	Shader shaders[] = {
@@ -342,8 +281,6 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 
 	result.cmdbuf = cmdbuf;
 
-	result.vertex_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizeof(Vertex) * ArrayCount(cube_vertices), (void *)cube_vertices);
-	result.index_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, sizeof(u32) * ArrayCount(cube_indices), (void *) cube_indices);
 	result.instance_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizeof(InstanceData) * MAX_INSTANCE_COUNT, 0);
 	result.instance_staging_buffer = CreateStagingBuffer(sizeof(InstanceData) * MAX_INSTANCE_COUNT, 0);
 	result.culled_instance_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizeof(InstanceData) * MAX_INSTANCE_COUNT, 0);
@@ -351,7 +288,7 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 
 	result.frustum_info_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(FrustumInfo), 0);
 
-	VkDrawIndexedIndirectCommand indirect_cmd = {ArrayCount(cube_indices), 0, 0, 0, 0};
+	VkDrawIndexedIndirectCommand indirect_cmd = {6, 0, 0, 0, 0};
 	result.indirect_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, sizeof(VkDrawIndirectCommand) + sizeof(u32), &indirect_cmd);
 
@@ -362,8 +299,6 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 }
 
 void DestroyRenderer(Renderer *r) {
-	DestroyBuffer(r->vertex_buffer);
-	DestroyBuffer(r->index_buffer);
 	DestroyBuffer(r->instance_buffer);
 	DestroyStagingBuffer(r->instance_staging_buffer);
 	DestroyBuffer(r->culled_instance_buffer);
@@ -377,24 +312,75 @@ void DestroyRenderer(Renderer *r) {
 	DestroyPipeline(r->cull_pass_pipeline);
 }
 
-u32 UpdateBlockInstances(Renderer *r, OrbitCamera *camera, VkCommandBuffer cmdbuf) {
+Block GetBlock(int x, int y, int z) {
+	if_unlikely(x < 0 || y < 0 || z < 0) {
+		return air_block;
+	}
+
+	int cx = x / CHUNK_X;
+	int cy = y / CHUNK_Y;
+	int cz = z / CHUNK_Z;
+
+	if_unlikely(cx >= WORLD_CHUNK_COUNT_X || cy >= WORLD_CHUNK_COUNT_Y || cz >= WORLD_CHUNK_COUNT_Z) {
+		return air_block;
+	}
+
+	int bx = x % CHUNK_X;
+	int by = y % CHUNK_Y;
+	int bz = z % CHUNK_Z;
+	
+	Chunk *c = &chunks[cx][cz][cy];
+	return c->blocks[bx][bz][by];
+}
+
+u32 UpdateBlockInstances(Renderer *r, Camera *camera, VkCommandBuffer cmdbuf) {
 	InstanceData *instance_data = (InstanceData *) r->instance_staging_buffer.allocation_info.pMappedData;
 
 	u32 instance_count = 0;
 	
 	for (int cx = 0; cx < WORLD_CHUNK_COUNT_X; ++cx) {
 		for (int cz = 0; cz < WORLD_CHUNK_COUNT_Z; ++cz) {
-			Chunk c = chunks[cx][cz];
+			for (int cy = 0; cy < WORLD_CHUNK_COUNT_Y; ++cy) {
+				Chunk *c = &chunks[cx][cz][cy];
 
-			for (int x = 0; x < CHUNK_X; ++x) {
-				for (int z = 0; z < CHUNK_Z; ++z) {
-					for (int y = 0; y < CHUNK_Y; ++y) {
-						Block b = c.blocks[x][z][y];
-						if (b.type != BLOCK_AIR) {
-							InstanceData *id = instance_data + instance_count;
-							id->pos = c.world_pos + vec3(x, y, z);
-							id->texture = block_textures_map[b.type];
-							instance_count++;
+				for (int x = 0; x < CHUNK_X; ++x) {
+					int wx = c->world_pos.x + x;
+					for (int z = 0; z < CHUNK_Z; ++z) {
+						int wz = c->world_pos.z + z;
+						for (int y = 0; y < CHUNK_Y; ++y) {
+							int wy = c->world_pos.y + y;
+							Block b = c->blocks[x][z][y];
+
+							if (b.type != BLOCK_AIR) {
+								Block above = GetBlock(wx, wy + 1, wz);
+								Block below = GetBlock(wx, wy - 1, wz);
+								Block west = GetBlock(wx - 1, wy, wz);
+								Block east = GetBlock(wx + 1, wy, wz);
+								Block north = GetBlock(wx, wy, wz + 1);
+								Block south = GetBlock(wx, wy, wz - 1);
+
+								vec3 pos = c->world_pos + vec3(x, y, z);
+								u32 *tex = block_textures_map[b.type];
+
+								if (above.type == BLOCK_AIR) {
+									*(instance_data + instance_count++) = {pos, SIDE_TOP, tex[SIDE_TOP]};
+								}
+								if (below.type == BLOCK_AIR) {
+									*(instance_data + instance_count++) = {pos, SIDE_BOT, tex[SIDE_BOT]};
+								}
+								if (west.type == BLOCK_AIR) {
+									*(instance_data + instance_count++) = {pos, SIDE_WEST, tex[SIDE_WEST]};
+								}
+								if (east.type == BLOCK_AIR) {
+									*(instance_data + instance_count++) = {pos, SIDE_EAST, tex[SIDE_EAST]};
+								}
+								if (north.type == BLOCK_AIR) {
+									*(instance_data + instance_count++) = {pos, SIDE_NORTH, tex[SIDE_NORTH]};
+								}
+								if (south.type == BLOCK_AIR) {
+									*(instance_data + instance_count++) = {pos, SIDE_SOUTH, tex[SIDE_SOUTH]};
+								}
+							}
 						}
 					}
 				}
@@ -470,13 +456,11 @@ void Render(Renderer *r, TextureArray *textures, VkCommandBuffer cmdbuf, u32 ins
 	}
 
 	BindPipeline(&r->render_pipeline, cmdbuf);
-	BindBuffer(&r->render_pipeline, 0, &r->vertex_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	BindBuffer(&r->render_pipeline, 1, &r->globals_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-	BindBuffer(&r->render_pipeline, 2, &r->culled_instance_buffer, instance_count * sizeof(InstanceData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	BindTextureArray(&r->render_pipeline, 3, textures);
+	BindBuffer(&r->render_pipeline, 0, &r->globals_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	BindBuffer(&r->render_pipeline, 1, &r->culled_instance_buffer, instance_count * sizeof(InstanceData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	BindTextureArray(&r->render_pipeline, 2, textures);
 
-	vkCmdBindIndexBuffer(cmdbuf, r->index_buffer.handle, 0, VK_INDEX_TYPE_UINT32);
-	vkCmdDrawIndexedIndirect(cmdbuf, r->indirect_buffer.handle, 0, 1, sizeof(VkDrawIndirectCommand));
+	vkCmdDrawIndirect(cmdbuf, r->indirect_buffer.handle, 0, 1, sizeof(VkDrawIndirectCommand));
 }
 
 void LoadTextures(TextureArray *textures, VkCommandPool cmdpool) {
@@ -515,13 +499,14 @@ void NKMain() {
 	VkQueryPool pipeline_queries = CreateQueryPool(1, VK_QUERY_TYPE_PIPELINE_STATISTICS);
 
 	Renderer renderer = CreateRenderer(cmdpool, cmdbuf, color_target.format, depth_target.format);
-	OrbitCamera orbit_camera = CreateOrbitCamera();
-	ResizeOrbitCamera(&orbit_camera, float(swapchain.width), float(swapchain.height));
+
+	Player player = CreatePlayer();
+	ResizePlayerCamera(&player.camera, float(swapchain.width), float(swapchain.height));
 
 	{
 		VkCommandBuffer temp_cmdbuf = BeginTempCommandBuffer(cmdpool);
 
-		UploadOrbitCameraMatrices(&orbit_camera, &renderer, temp_cmdbuf);
+		UploadPlayerCameraMatrices(&player, &renderer, temp_cmdbuf);
 
 		EndTempCommandBuffer(cmdpool, temp_cmdbuf);
 	}
@@ -535,18 +520,20 @@ void NKMain() {
 
 	for (int cx = 0; cx < WORLD_CHUNK_COUNT_X; ++cx) {
 		for (int cz = 0; cz < WORLD_CHUNK_COUNT_Z; ++cz) {
-			Chunk *c = &chunks[cx][cz];
-			c->world_pos = vec3(cx * CHUNK_X, 0, cz * CHUNK_Z);
+			for (int cy = 0; cy < WORLD_CHUNK_COUNT_Y; ++cy) {
+				Chunk *c = &chunks[cx][cz][cy];
+				c->world_pos = vec3(cx * CHUNK_X, cy * CHUNK_Y, cz * CHUNK_Z);
 
-			for (int x = 0; x < CHUNK_X; ++x) {
-				for (int z = 0; z < CHUNK_Z; ++z) {
-					for (int y = 0; y < CHUNK_Y; ++y) {
-						if (y < 11) {
-							c->blocks[x][z][y].type = BLOCK_STONE;
-						} else if (y < 15) {
-							c->blocks[x][z][y].type = BLOCK_DIRT;
-						} else {
-							c->blocks[x][z][y].type = BLOCK_GRASS;
+				for (int x = 0; x < CHUNK_X; ++x) {
+					for (int z = 0; z < CHUNK_Z; ++z) {
+						for (int y = 0; y < CHUNK_Y - 2; ++y) {
+							if (y < 11) {
+								c->blocks[x][z][y].type = BLOCK_STONE;
+							} else if (y < 13) {
+								c->blocks[x][z][y].type = BLOCK_DIRT;
+							} else {
+								c->blocks[x][z][y].type = BLOCK_GRASS;
+							}
 						}
 					}
 				}
@@ -554,23 +541,44 @@ void NKMain() {
 		}
 	}
 
+	Chunk *c = &chunks[0][0][0];
+	c->blocks[14][14][14] = { BLOCK_STONE_BRICKS };
+	c->blocks[14][14][15] = { BLOCK_STONE_BRICKS };
+
 	double cpu_time_avg = 0.0;
 	double gpu_time_avg = 0.0;
 	u64 triangles = 0.0;
 	double triangles_per_sec = 0.0;
+
+	u64 last_frame_time = GetTimeNowUs();
+
+	b32 cursor_locked = 1;
+	SetCursorToNone(&window);
 
 	while (window.running) {
 		u64 cpu_time_begin = GetTimeNowUs();
 
 		UpdateWindow(&window);
 
-		if (UpdateOrbitCamera(&orbit_camera)) {
-			VkCommandBuffer temp_cmdbuf = BeginTempCommandBuffer(cmdpool);
+		u64 now_time = GetTimeNowUs();
+		u64 delta = now_time - last_frame_time;
+		last_frame_time = now_time;
+		float df = float(delta) / 1000000;
 
-			UploadOrbitCameraMatrices(&orbit_camera, &renderer, temp_cmdbuf);
-
-			EndTempCommandBuffer(cmdpool, temp_cmdbuf);
+		if (IsKeyDown(KEY_ESCAPE)) {
+			cursor_locked ^= 1;
+			if (cursor_locked) {
+				SetCursorToNone(&window);
+			} else {
+				SetCursorToArrow();
+			}
 		}
+
+		if (IsKeyDown(KEY_Q)) {
+			window.running = false;
+		}
+
+		UpdatePlayer(&player, df);
 
 		if (window.resized) {
 			UpdateSwapchain(&swapchain, cmdpool, 1);
@@ -583,8 +591,7 @@ void NKMain() {
 				VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
 
 			VkCommandBuffer temp_cmdbuf = BeginTempCommandBuffer(cmdpool);
-			ResizeOrbitCamera(&orbit_camera, float(swapchain.width), float(swapchain.height));
-			UploadOrbitCameraMatrices(&orbit_camera, &renderer, temp_cmdbuf);
+			ResizePlayerCamera(&player.camera, float(swapchain.width), float(swapchain.height));
 			EndTempCommandBuffer(cmdpool, temp_cmdbuf);
 		}
 
@@ -592,7 +599,9 @@ void NKMain() {
 			continue;
 		}
 
-		u32 instance_count = UpdateBlockInstances(&renderer, &orbit_camera, cmdbuf);
+		UploadPlayerCameraMatrices(&player, &renderer, cmdbuf);
+
+		u32 instance_count = UpdateBlockInstances(&renderer, &player.camera, cmdbuf);
 
 		vkCmdResetQueryPool(cmdbuf, pipeline_queries, 0, 1);
 		vkCmdBeginQuery(cmdbuf, pipeline_queries, 0, 0);

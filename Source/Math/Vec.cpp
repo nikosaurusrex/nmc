@@ -46,12 +46,33 @@ vec3 operator-(vec3 a, vec3 b) {
     return vec3(a.x - b.x, a.y - b.y, a.z - b.z);
 }
 
+vec3 operator+=(vec3 &a, vec3 b) {
+    a.x += b.x;
+    a.y += b.y;
+    a.z += b.z;
+    return a;
+}
+
+vec3 operator-=(vec3 &a, vec3 b) {
+    a.x -= b.x;
+    a.y -= b.y;
+    a.z -= b.z;
+    return a;
+}
+
 vec3 operator*(vec3 a, float s) {
     return vec3(a.x * s, a.y * s, a.z * s);
 }
 
 vec3 operator*(float s, vec3 a) {
     return vec3(a.x * s, a.y * s, a.z * s);
+}
+
+vec3 operator*=(vec3 &a, float s) {
+    a.x *= s;
+    a.y *= s;
+    a.z *= s;
+    return a;
 }
 
 vec3 operator/(vec3 a, float s) {
