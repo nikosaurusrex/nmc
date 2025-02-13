@@ -1,14 +1,17 @@
 #include "World.h"
 
 global World world;
+global u32 global_dirty;
 
-Block *GetBlockAtPos(vec3 pos) {
+BlockRef GetBlockRef(vec3 pos) {
+	BlockRef result = {};
+
 	int cx = int(pos.x) / CHUNK_X;
 	int cz = int(pos.z) / CHUNK_Z;
 	int cy = int(pos.y) / CHUNK_Y;
 
 	if (cx < 0 || cz < 0 || cy < 0 || cx >= WORLD_CHUNK_COUNT_X || cz >= WORLD_CHUNK_COUNT_Z || cy >= WORLD_CHUNK_COUNT_Y) {
-		return 0;
+		return result;
 	}
 
 	int bx = int(pos.x) % CHUNK_X;
@@ -16,9 +19,13 @@ Block *GetBlockAtPos(vec3 pos) {
 	int by = int(pos.y) % CHUNK_Y;
 
 	Chunk *c = &world.chunks[cx][cz][cy];
-	Block *b = &c->blocks[bx][bz][by];
 
-	return b;
+	result.c = c;
+	result.bx = bx;
+	result.by = by;
+	result.bz = bz;
+
+	return result;
 }
 
 Block GetBlock(int x, int y, int z) {
@@ -42,8 +49,31 @@ Block GetBlock(int x, int y, int z) {
 	return c->blocks[bx][bz][by];
 }
 
+Block GetBlock(BlockRef ref) {
+	return ref.c->blocks[ref.bx][ref.bz][ref.by];
+}
+
+void PlaceBlock(BlockRef ref, Block block) {
+	PlaceBlock(ref.c, ref.bx, ref.by, ref.bz, block);
+}
+
+void PlaceBlock(Chunk *c, int x, int y, int z, Block block) {
+	c->blocks[x][z][y] = block;
+	c->dirty = 1;
+
+	global_dirty++;
+}
+
 Chunk *GetChunk(int x, int y, int z) {
 	return &world.chunks[x][z][y];
+}
+
+b32 AnyChunkDirty() {
+	return global_dirty > 0;
+}
+
+void ResetChunkDirtiness() {
+	global_dirty = 0;
 }
 
 float GetGroundLevel(vec3 pos) {

@@ -21,12 +21,6 @@ struct FrustumInfo {
 	u32 instance_count;
 };
 
-struct InstanceData {
-	vec3 pos;
-	u32 side;
-	u32 texture;
-};
-
 struct Renderer {
 	Pipeline render_pipeline;
 	Pipeline cull_pipeline;
@@ -140,9 +134,10 @@ RayIntersection CastRay(Player *p) {
 		result.prev_pos = result.pos;
 		result.pos = cp;
 
-		Block *b = GetBlockAtPos(cp);
-		if (b) {
-			if (*b != BLOCK_AIR) {
+		BlockRef ref = GetBlockRef(cp);
+		if (ref.c) {
+			Block b = GetBlock(ref);
+			if (b != BLOCK_AIR) {
 				break;
 			}
 		}
@@ -230,21 +225,19 @@ void UpdatePlayer(Player *p, float df) {
 
 	if (WasButtonPressed(MOUSE_BUTTON_LEFT)) {
 		RayIntersection intersect = CastRay(p);
-		Block *b = GetBlockAtPos(intersect.pos);
-		if (b) {
-			if (*b != BLOCK_AIR) {
-				*b = BLOCK_AIR;
-			}
+		BlockRef br = GetBlockRef(intersect.pos);
+		if (br.c) {
+			PlaceBlock(br, BLOCK_AIR);
 		}
 	}
 
 	if (WasButtonPressed(MOUSE_BUTTON_RIGHT)) {
 		RayIntersection intersect = CastRay(p);
-		Block *hit = GetBlockAtPos(intersect.pos);
-		Block *place = GetBlockAtPos(intersect.prev_pos);
-		if (hit && place) {
-			if (*hit != BLOCK_AIR && *place == BLOCK_AIR) {
-				*place = BLOCK_OAK_LOG;
+		BlockRef hit = GetBlockRef(intersect.pos);
+		BlockRef place = GetBlockRef(intersect.prev_pos);
+		if (hit.c && place.c) {
+			if (GetBlock(hit) != BLOCK_AIR && GetBlock(place) == BLOCK_AIR) {
+				PlaceBlock(place, BLOCK_AIR);
 			}
 		}
 	}
@@ -316,9 +309,9 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 
 	result.frustum_info_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(FrustumInfo), 0);
 
-	VkDrawIndexedIndirectCommand indirect_cmd = {6, 0, 0, 0, 0};
+	VkDrawIndirectCommand indirect_cmd = {6, 0, 0, 0};
 	result.indirect_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, sizeof(VkDrawIndirectCommand) + sizeof(u32), &indirect_cmd);
+		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, sizeof(VkDrawIndirectCommand), &indirect_cmd);
 
 	Globals globals = {};
 	result.globals_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(globals), &globals);
@@ -340,16 +333,21 @@ void DestroyRenderer(Renderer *r) {
 	DestroyPipeline(r->cull_pass_pipeline);
 }
 
-u32 UpdateBlockInstances(Renderer *r, Camera *camera, VkCommandBuffer cmdbuf) {
-	InstanceData *instance_data = (InstanceData *) r->instance_staging_buffer.allocation_info.pMappedData;
+u32 UpdateBlockInstances(Renderer *r, VkCommandBuffer cmdbuf, u32 prev_instance_count) {
+	if (!AnyChunkDirty()) {
+		return prev_instance_count;
+	}
 
-	u32 instance_count = 0;
-	
+	ResetChunkDirtiness();
+
 	for (int cx = 0; cx < WORLD_CHUNK_COUNT_X; ++cx) {
 		for (int cz = 0; cz < WORLD_CHUNK_COUNT_Z; ++cz) {
 			for (int cy = 0; cy < WORLD_CHUNK_COUNT_Y; ++cy) {
 				Chunk *c = GetChunk(cx, cy, cz);
+				if (!c->dirty) continue;
 
+				// pass 1 - count instances
+				u32 chunk_instance_count = 0;
 				for (int x = 0; x < CHUNK_X; ++x) {
 					int wx = c->world_pos.x + x;
 					for (int z = 0; z < CHUNK_Z; ++z) {
@@ -360,43 +358,81 @@ u32 UpdateBlockInstances(Renderer *r, Camera *camera, VkCommandBuffer cmdbuf) {
 
 							if (b == BLOCK_AIR) continue;
 
-							Block above = GetBlock(wx, wy + 1, wz);
-							Block below = GetBlock(wx, wy - 1, wz);
-							Block west = GetBlock(wx - 1, wy, wz);
-							Block east = GetBlock(wx + 1, wy, wz);
-							Block north = GetBlock(wx, wy, wz + 1);
-							Block south = GetBlock(wx, wy, wz - 1);
+							if (GetBlock(wx, wy + 1, wz) == BLOCK_AIR) chunk_instance_count++;
+							if (GetBlock(wx, wy - 1, wz) == BLOCK_AIR) chunk_instance_count++;
+							if (GetBlock(wx - 1, wy, wz) == BLOCK_AIR) chunk_instance_count++;
+							if (GetBlock(wx + 1, wy, wz) == BLOCK_AIR) chunk_instance_count++;
+							if (GetBlock(wx, wy, wz + 1) == BLOCK_AIR) chunk_instance_count++;
+							if (GetBlock(wx, wy, wz - 1) == BLOCK_AIR) chunk_instance_count++;
+						}
+					}
+				}
+
+				if (!c->cached_instance_data) {
+					c->cached_instance_data = (InstanceData *) HeapAlloc(chunk_instance_count * sizeof(InstanceData));
+				} else {
+					c->cached_instance_data =
+						(InstanceData *) HeapRealloc(c->cached_instance_data, chunk_instance_count * sizeof(InstanceData));
+				}
+				c->instance_count = chunk_instance_count;
+
+				// pass 2 - fill instance data cache
+				u32 idx = 0;
+				for (int x = 0; x < CHUNK_X; ++x) {
+					int wx = c->world_pos.x + x;
+					for (int z = 0; z < CHUNK_Z; ++z) {
+						int wz = c->world_pos.z + z;
+						for (int y = 0; y < CHUNK_Y; ++y) {
+							int wy = c->world_pos.y + y;
+							Block b = c->blocks[x][z][y];
+
+							if (b == BLOCK_AIR) continue;
 
 							vec3 pos = vec3(wx, wy, wz);
 							u32 *tex = block_textures_map[b];
 
-							if (above == BLOCK_AIR) {
-								*(instance_data + instance_count++) = {pos, SIDE_TOP, tex[SIDE_TOP]};
+							if (GetBlock(wx, wy + 1, wz) == BLOCK_AIR) {
+								c->cached_instance_data[idx++] = { pos, SIDE_TOP, tex[SIDE_TOP] };
 							}
-							if (below == BLOCK_AIR) {
-								*(instance_data + instance_count++) = {pos, SIDE_BOT, tex[SIDE_BOT]};
+							if (GetBlock(wx, wy - 1, wz) == BLOCK_AIR) {
+								c->cached_instance_data[idx++] = { pos, SIDE_BOT, tex[SIDE_BOT] };
 							}
-							if (west == BLOCK_AIR) {
-								*(instance_data + instance_count++) = {pos, SIDE_WEST, tex[SIDE_WEST]};
+							if (GetBlock(wx - 1, wy, wz) == BLOCK_AIR) {
+								c->cached_instance_data[idx++] = { pos, SIDE_WEST, tex[SIDE_WEST] };
 							}
-							if (east == BLOCK_AIR) {
-								*(instance_data + instance_count++) = {pos, SIDE_EAST, tex[SIDE_EAST]};
+							if (GetBlock(wx + 1, wy, wz) == BLOCK_AIR) {
+								c->cached_instance_data[idx++] = { pos, SIDE_EAST, tex[SIDE_EAST] };
 							}
-							if (north == BLOCK_AIR) {
-								*(instance_data + instance_count++) = {pos, SIDE_NORTH, tex[SIDE_NORTH]};
+							if (GetBlock(wx, wy, wz + 1) == BLOCK_AIR) {
+								c->cached_instance_data[idx++] = { pos, SIDE_NORTH, tex[SIDE_NORTH] };
 							}
-							if (south == BLOCK_AIR) {
-								*(instance_data + instance_count++) = {pos, SIDE_SOUTH, tex[SIDE_SOUTH]};
+							if (GetBlock(wx, wy, wz - 1) == BLOCK_AIR) {
+								c->cached_instance_data[idx++] = { pos, SIDE_SOUTH, tex[SIDE_SOUTH] };
 							}
 						}
 					}
 				}
+
+				c->dirty = 0;
 			}
 		}
 	}
 
-	if (instance_count == 0) {
-		return 0;
+	
+	InstanceData *instance_data = (InstanceData *) r->instance_staging_buffer.allocation_info.pMappedData;
+	u32 instance_count = 0;
+
+	for (int cx = 0; cx < WORLD_CHUNK_COUNT_X; ++cx) {
+		for (int cz = 0; cz < WORLD_CHUNK_COUNT_Z; ++cz) {
+			for (int cy = 0; cy < WORLD_CHUNK_COUNT_Y; ++cy) {
+				Chunk *c = GetChunk(cx, cy, cz);
+				if (c->cached_instance_data && c->instance_count > 0) {
+					CopyMemory(instance_data + instance_count,
+						c->cached_instance_data, c->instance_count * sizeof(InstanceData));
+					instance_count += c->instance_count;
+				}
+			}
+		}
 	}
 
     VkBufferCopy copy = {};
@@ -405,8 +441,10 @@ u32 UpdateBlockInstances(Renderer *r, Camera *camera, VkCommandBuffer cmdbuf) {
     copy.size = instance_count * sizeof(InstanceData);
     vkCmdCopyBuffer(cmdbuf, r->instance_staging_buffer.handle, r->instance_buffer.handle, 1, &copy);
 
-	vkCmdFillBuffer(cmdbuf, r->culled_counter_buffer.handle, 0, sizeof(u32), 0);
+	return instance_count;
+}
 
+void Cull(Renderer *r, Camera *camera, VkCommandBuffer cmdbuf, u32 instance_count) {
 	FrustumInfo frustum_info = {};
 	mat4 proj_t = Transpose(camera->proj_matrix);
 	vec4 row0 = proj_t[0];
@@ -424,6 +462,8 @@ u32 UpdateBlockInstances(Renderer *r, Camera *camera, VkCommandBuffer cmdbuf) {
 	frustum_info.instance_count = instance_count;
 
 	UpdateRendererBuffer(r->frustum_info_buffer, sizeof(frustum_info), &frustum_info, cmdbuf);
+
+	vkCmdFillBuffer(cmdbuf, r->culled_counter_buffer.handle, 0, sizeof(u32), 0);
 
 	BindPipeline(&r->cull_pipeline, cmdbuf);
 
@@ -448,13 +488,13 @@ u32 UpdateBlockInstances(Renderer *r, Camera *camera, VkCommandBuffer cmdbuf) {
 
 	vkCmdDispatch(cmdbuf, 1, 1, 1);
 
-	VkBufferMemoryBarrier2 cull_barrier = CreateBufferBarrier(
+	VkBufferMemoryBarrier2 cull_barriers[] = { CreateBufferBarrier(
 		r->indirect_buffer.handle, VK_WHOLE_SIZE, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-		VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT
-	);
-    PipelineBufferBarriers(cmdbuf, VK_DEPENDENCY_DEVICE_GROUP_BIT, &cull_barrier, 1);
-
-	return instance_count;
+		VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT),
+		CreateBufferBarrier(
+		r->culled_instance_buffer.handle, instance_count * sizeof(InstanceData), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+		VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT) };
+    PipelineBufferBarriers(cmdbuf, VK_DEPENDENCY_DEVICE_GROUP_BIT, cull_barriers, 2);
 }
 
 void Render(Renderer *r, TextureArray *textures, VkCommandBuffer cmdbuf, u32 instance_count) {
@@ -538,6 +578,8 @@ void NKMain() {
 	b32 cursor_locked = 1;
 	SetCursorToNone(&window);
 
+	u32 prev_instance_count = 0;
+
 	while (window.running) {
 		u64 cpu_time_begin = GetTimeNowUs();
 
@@ -584,7 +626,10 @@ void NKMain() {
 
 		UploadPlayerCameraMatrices(&player, &renderer, cmdbuf);
 
-		u32 instance_count = UpdateBlockInstances(&renderer, &player.camera, cmdbuf);
+		u32 instance_count = UpdateBlockInstances(&renderer, cmdbuf, prev_instance_count);
+		prev_instance_count = instance_count;
+
+		Cull(&renderer, &player.camera, cmdbuf, instance_count);
 
 		vkCmdResetQueryPool(cmdbuf, pipeline_queries, 0, 1);
 		vkCmdBeginQuery(cmdbuf, pipeline_queries, 0, 0);

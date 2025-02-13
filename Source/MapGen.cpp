@@ -62,7 +62,8 @@ void GenerateMap() {
 								} else {
 									block = BLOCK_STONE;
 								}
-								c->blocks[bx][bz][i] = block;
+
+								PlaceBlock(c, bx, i, bz, block);
 							}
 						}
 					}

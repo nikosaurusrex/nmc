@@ -61,6 +61,7 @@ void DecommitMemory(void *ptr, u64 size);
 void ReleaseMemory(void *ptr, u64 size);
 
 void *HeapAlloc(u64 size);
+void *HeapRealloc(void *ptr, u64 size);
 void HeapFree(void *ptr);
 
 // Print

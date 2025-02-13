@@ -97,6 +97,10 @@ void *HeapAlloc(u64 size) {
     return malloc(size);
 }
 
+void *HeapRealloc(void *ptr, u64 size) {
+    return realloc(ptr, size);
+}
+
 void HeapFree(void *ptr) {
     return free(ptr);
 }

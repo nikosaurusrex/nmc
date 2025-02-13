@@ -10,9 +10,9 @@ enum {
 };
 
 enum {
-	WORLD_CHUNK_COUNT_X = 8,
-	WORLD_CHUNK_COUNT_Y = 8,
-	WORLD_CHUNK_COUNT_Z = 8,
+	WORLD_CHUNK_COUNT_X = 16,
+	WORLD_CHUNK_COUNT_Y = 16,
+	WORLD_CHUNK_COUNT_Z = 16,
 };
 
 enum {
@@ -51,18 +51,41 @@ enum {
 
 typedef u8 Block;
 
+struct InstanceData {
+	vec3 pos;
+	u32 side;
+	u32 texture;
+};
+
 struct Chunk {
 	Block blocks[CHUNK_X][CHUNK_Z][CHUNK_Y];
 	vec3 world_pos;
+	
+	InstanceData *cached_instance_data;
+	u32 instance_count;
+	b8 dirty;
 };
 
 struct World {
 	Chunk chunks[WORLD_CHUNK_COUNT_X][WORLD_CHUNK_COUNT_Z][WORLD_CHUNK_COUNT_Y];
 };
 
-Block *GetBlockAtPos(vec3 pos);
+struct BlockRef {
+	Chunk *c;
+	int bx;
+	int by;
+	int bz;
+};
+
+BlockRef GetBlockRef(vec3 pos);
 Block GetBlock(int x, int y, int z);
+Block GetBlock(BlockRef ref);
+
+void PlaceBlock(BlockRef ref, Block block);
+void PlaceBlock(Chunk *c, int x, int y, int z, Block block);
 
 Chunk *GetChunk(int x, int y, int z);
+b32 AnyChunkDirty();
+void ResetChunkDirtiness();
 
 float GetGroundLevel(vec3 pos);
