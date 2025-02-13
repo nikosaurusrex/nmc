@@ -8,51 +8,8 @@
 #include "Math/Quat.h"
 #include "Math/NMath.h"
 
-enum {
-	CHUNK_X = 16,
-	CHUNK_Y = 16,
-	CHUNK_Z = 16,
-};
-
-enum {
-	WORLD_CHUNK_COUNT_X = 8,
-	WORLD_CHUNK_COUNT_Y = 1,
-	WORLD_CHUNK_COUNT_Z = 8,
-};
-
-enum {
-	SIDE_TOP,
-	SIDE_BOT,
-	SIDE_WEST,
-	SIDE_EAST,
-	SIDE_NORTH,
-	SIDE_SOUTH
-};
-
-enum {
-	BLOCK_AIR,
-	BLOCK_DIRT,
-	BLOCK_GRASS,
-	BLOCK_OAK_LOG,
-	BLOCK_STONE,
-	BLOCK_COBBLE_STONE,
-	BLOCK_STONE_BRICKS,
-
-	BLOCK_COUNT
-};
-
-enum {
-	TEXTURE_DIRT,
-	TEXTURE_GRASS_SIDE,
-	TEXTURE_GRASS_TOP,
-	TEXTURE_OAK_LOG_SIDE,
-	TEXTURE_OAK_LOG_TOP,
-	TEXTURE_STONE,
-	TEXTURE_COBBLE_STONE,
-	TEXTURE_STONE_BRICKS,
-
-	TEXTURE_COUNT
-};
+#include "World.h"
+#include "MapGen.h"
 
 enum {
 	MAX_INSTANCE_COUNT = 10000000
@@ -68,15 +25,6 @@ struct InstanceData {
 	vec3 pos;
 	u32 side;
 	u32 texture;
-};
-
-struct Block {
-	u8 type;
-};
-
-struct Chunk {
-	Block blocks[CHUNK_X][CHUNK_Z][CHUNK_Y];
-	vec3 world_pos;
 };
 
 struct Renderer {
@@ -117,11 +65,15 @@ struct Player {
 	float pitch;
 
 	b32 on_ground;
+	b32 flying;
 
 	Camera camera;
 };
 
-global Chunk chunks[WORLD_CHUNK_COUNT_X][WORLD_CHUNK_COUNT_Z][WORLD_CHUNK_COUNT_Y];
+struct RayIntersection {
+	vec3 pos;
+	vec3 prev_pos;
+};
 
 global u32 block_textures_map[BLOCK_COUNT][6] = {
 	{},
@@ -133,7 +85,7 @@ global u32 block_textures_map[BLOCK_COUNT][6] = {
 	{TEXTURE_STONE_BRICKS, TEXTURE_STONE_BRICKS, TEXTURE_STONE_BRICKS, TEXTURE_STONE_BRICKS, TEXTURE_STONE_BRICKS, TEXTURE_STONE_BRICKS},
 };
 
-global const Block air_block = { BLOCK_AIR };
+global const float eye_height = 1.6f;
 
 Player CreatePlayer() {
 	Player result = {};
@@ -144,6 +96,7 @@ Player CreatePlayer() {
 	result.yaw = 125.0f;
 	result.pitch = 0;
 	result.on_ground = 1;
+	result.flying = 0;
 
 	return result;
 }
@@ -152,20 +105,52 @@ void ResizePlayerCamera(Camera *c, float w, float h) {
 	c->width = w;
 	c->height = h;
 
-    mat4 proj_matrix = Perspective(PI32 / 3.0f, c->width / c->height, 0.01f, 1000.f);
+	mat4 proj_matrix = Perspective(PI32 / 3.0f, c->width / c->height, 0, 1000.0f);
 	c->proj_matrix = proj_matrix;
 }
 
 void UploadPlayerCameraMatrices(Player *p, Renderer *r, VkCommandBuffer cmdbuf) {
 	Camera *c = &p->camera;
 
-	vec3 pos = p->position + vec3(0, 1.6f, 0);
+	vec3 pos = p->position + vec3(0, eye_height, 0);
 	mat4 view_matrix = LookAt(pos, pos + c->front, vec3(0, 1, 0));
 
 	c->view_matrix = view_matrix;
 
 	Globals globals = { c->proj_matrix, view_matrix };
     UpdateRendererBuffer(r->globals_buffer, sizeof(globals), &globals, cmdbuf);
+}
+
+RayIntersection CastRay(Player *p) {
+	RayIntersection result = {};
+
+	const float RAY_MAX_DISTANCE = 6;
+	const float RAY_STEP = 0.5f;
+
+	vec3 origin = p->position + vec3(0, eye_height, 0);
+	vec3 dir = p->camera.front;
+	float dist = RAY_STEP;
+
+	result.pos = origin;
+	result.prev_pos = origin;
+
+	while (dist < RAY_MAX_DISTANCE) {
+		vec3 cp = origin + dir * dist;
+
+		result.prev_pos = result.pos;
+		result.pos = cp;
+
+		Block *b = GetBlockAtPos(cp);
+		if (b) {
+			if (*b != BLOCK_AIR) {
+				break;
+			}
+		}
+
+		dist += RAY_STEP;
+	}
+
+	return result;
 }
 
 void UpdatePlayer(Player *p, float df) {
@@ -191,6 +176,10 @@ void UpdatePlayer(Player *p, float df) {
 
 	vec3 front = p->camera.front;
 	float speed = df;
+	if (p->flying) {
+		speed *= 5;
+	}
+
 	if (IsKeyDown(KEY_W)) {
 		p->acceleration += front * speed;
 	}
@@ -205,20 +194,59 @@ void UpdatePlayer(Player *p, float df) {
 		vec3 right = Cross(front, vec3(0, 1, 0));
 		p->acceleration += right * speed;
 	}
-	p->acceleration.y = -0.01f;
-	if (IsKeyDown(KEY_SPACE) && p->on_ground) {
-		p->velocity.y = 0.2f;
+
+	if (WasKeyPressed(KEY_F)) {
+		p->flying = !p->flying;
+	}
+
+	if (p->flying) {
+		if (IsKeyDown(KEY_SPACE)) {
+			p->velocity.y = 0.25f;
+		}
+		if (IsKeyDown(KEY_SHIFT)) {
+			p->velocity.y = -0.25f;
+		}
 		p->on_ground = 0;
+	} else {
+		p->acceleration.y = -0.01f;
+		if (IsKeyDown(KEY_SPACE) && p->on_ground) {
+			p->velocity.y = 0.25f;
+			p->on_ground = 0;
+		}
 	}
 
 	p->velocity += p->acceleration;
 	p->velocity *= 0.9;
 	p->position += p->velocity;
 
-	if (p->position.y <= 14) {
-		p->position.y = 14;
-		p->velocity.y = 0;
-		p->on_ground = 1;
+	if (!p->flying) {
+		float ground_y = GetGroundLevel(p->position);
+		if (p->position.y <= ground_y) {
+			p->position.y = ground_y;
+			p->velocity.y = 0;
+			p->on_ground = 1;
+		}
+	}
+
+	if (WasButtonPressed(MOUSE_BUTTON_LEFT)) {
+		RayIntersection intersect = CastRay(p);
+		Block *b = GetBlockAtPos(intersect.pos);
+		if (b) {
+			if (*b != BLOCK_AIR) {
+				*b = BLOCK_AIR;
+			}
+		}
+	}
+
+	if (WasButtonPressed(MOUSE_BUTTON_RIGHT)) {
+		RayIntersection intersect = CastRay(p);
+		Block *hit = GetBlockAtPos(intersect.pos);
+		Block *place = GetBlockAtPos(intersect.prev_pos);
+		if (hit && place) {
+			if (*hit != BLOCK_AIR && *place == BLOCK_AIR) {
+				*place = BLOCK_OAK_LOG;
+			}
+		}
 	}
 }
 
@@ -312,27 +340,6 @@ void DestroyRenderer(Renderer *r) {
 	DestroyPipeline(r->cull_pass_pipeline);
 }
 
-Block GetBlock(int x, int y, int z) {
-	if_unlikely(x < 0 || y < 0 || z < 0) {
-		return air_block;
-	}
-
-	int cx = x / CHUNK_X;
-	int cy = y / CHUNK_Y;
-	int cz = z / CHUNK_Z;
-
-	if_unlikely(cx >= WORLD_CHUNK_COUNT_X || cy >= WORLD_CHUNK_COUNT_Y || cz >= WORLD_CHUNK_COUNT_Z) {
-		return air_block;
-	}
-
-	int bx = x % CHUNK_X;
-	int by = y % CHUNK_Y;
-	int bz = z % CHUNK_Z;
-	
-	Chunk *c = &chunks[cx][cz][cy];
-	return c->blocks[bx][bz][by];
-}
-
 u32 UpdateBlockInstances(Renderer *r, Camera *camera, VkCommandBuffer cmdbuf) {
 	InstanceData *instance_data = (InstanceData *) r->instance_staging_buffer.allocation_info.pMappedData;
 
@@ -341,7 +348,7 @@ u32 UpdateBlockInstances(Renderer *r, Camera *camera, VkCommandBuffer cmdbuf) {
 	for (int cx = 0; cx < WORLD_CHUNK_COUNT_X; ++cx) {
 		for (int cz = 0; cz < WORLD_CHUNK_COUNT_Z; ++cz) {
 			for (int cy = 0; cy < WORLD_CHUNK_COUNT_Y; ++cy) {
-				Chunk *c = &chunks[cx][cz][cy];
+				Chunk *c = GetChunk(cx, cy, cz);
 
 				for (int x = 0; x < CHUNK_X; ++x) {
 					int wx = c->world_pos.x + x;
@@ -351,35 +358,35 @@ u32 UpdateBlockInstances(Renderer *r, Camera *camera, VkCommandBuffer cmdbuf) {
 							int wy = c->world_pos.y + y;
 							Block b = c->blocks[x][z][y];
 
-							if (b.type != BLOCK_AIR) {
-								Block above = GetBlock(wx, wy + 1, wz);
-								Block below = GetBlock(wx, wy - 1, wz);
-								Block west = GetBlock(wx - 1, wy, wz);
-								Block east = GetBlock(wx + 1, wy, wz);
-								Block north = GetBlock(wx, wy, wz + 1);
-								Block south = GetBlock(wx, wy, wz - 1);
+							if (b == BLOCK_AIR) continue;
 
-								vec3 pos = c->world_pos + vec3(x, y, z);
-								u32 *tex = block_textures_map[b.type];
+							Block above = GetBlock(wx, wy + 1, wz);
+							Block below = GetBlock(wx, wy - 1, wz);
+							Block west = GetBlock(wx - 1, wy, wz);
+							Block east = GetBlock(wx + 1, wy, wz);
+							Block north = GetBlock(wx, wy, wz + 1);
+							Block south = GetBlock(wx, wy, wz - 1);
 
-								if (above.type == BLOCK_AIR) {
-									*(instance_data + instance_count++) = {pos, SIDE_TOP, tex[SIDE_TOP]};
-								}
-								if (below.type == BLOCK_AIR) {
-									*(instance_data + instance_count++) = {pos, SIDE_BOT, tex[SIDE_BOT]};
-								}
-								if (west.type == BLOCK_AIR) {
-									*(instance_data + instance_count++) = {pos, SIDE_WEST, tex[SIDE_WEST]};
-								}
-								if (east.type == BLOCK_AIR) {
-									*(instance_data + instance_count++) = {pos, SIDE_EAST, tex[SIDE_EAST]};
-								}
-								if (north.type == BLOCK_AIR) {
-									*(instance_data + instance_count++) = {pos, SIDE_NORTH, tex[SIDE_NORTH]};
-								}
-								if (south.type == BLOCK_AIR) {
-									*(instance_data + instance_count++) = {pos, SIDE_SOUTH, tex[SIDE_SOUTH]};
-								}
+							vec3 pos = vec3(wx, wy, wz);
+							u32 *tex = block_textures_map[b];
+
+							if (above == BLOCK_AIR) {
+								*(instance_data + instance_count++) = {pos, SIDE_TOP, tex[SIDE_TOP]};
+							}
+							if (below == BLOCK_AIR) {
+								*(instance_data + instance_count++) = {pos, SIDE_BOT, tex[SIDE_BOT]};
+							}
+							if (west == BLOCK_AIR) {
+								*(instance_data + instance_count++) = {pos, SIDE_WEST, tex[SIDE_WEST]};
+							}
+							if (east == BLOCK_AIR) {
+								*(instance_data + instance_count++) = {pos, SIDE_EAST, tex[SIDE_EAST]};
+							}
+							if (north == BLOCK_AIR) {
+								*(instance_data + instance_count++) = {pos, SIDE_NORTH, tex[SIDE_NORTH]};
+							}
+							if (south == BLOCK_AIR) {
+								*(instance_data + instance_count++) = {pos, SIDE_SOUTH, tex[SIDE_SOUTH]};
 							}
 						}
 					}
@@ -518,32 +525,8 @@ void NKMain() {
 	vkGetPhysicalDeviceProperties(GetPhysicalDevice(), &pdev_props);
 	Assert(pdev_props.limits.timestampComputeAndGraphics);
 
-	for (int cx = 0; cx < WORLD_CHUNK_COUNT_X; ++cx) {
-		for (int cz = 0; cz < WORLD_CHUNK_COUNT_Z; ++cz) {
-			for (int cy = 0; cy < WORLD_CHUNK_COUNT_Y; ++cy) {
-				Chunk *c = &chunks[cx][cz][cy];
-				c->world_pos = vec3(cx * CHUNK_X, cy * CHUNK_Y, cz * CHUNK_Z);
-
-				for (int x = 0; x < CHUNK_X; ++x) {
-					for (int z = 0; z < CHUNK_Z; ++z) {
-						for (int y = 0; y < CHUNK_Y - 2; ++y) {
-							if (y < 11) {
-								c->blocks[x][z][y].type = BLOCK_STONE;
-							} else if (y < 13) {
-								c->blocks[x][z][y].type = BLOCK_DIRT;
-							} else {
-								c->blocks[x][z][y].type = BLOCK_GRASS;
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	Chunk *c = &chunks[0][0][0];
-	c->blocks[14][14][14] = { BLOCK_STONE_BRICKS };
-	c->blocks[14][14][15] = { BLOCK_STONE_BRICKS };
+	GenerateMap();
+	// GenerateMapImage();
 
 	double cpu_time_avg = 0.0;
 	double gpu_time_avg = 0.0;
@@ -606,7 +589,7 @@ void NKMain() {
 		vkCmdResetQueryPool(cmdbuf, pipeline_queries, 0, 1);
 		vkCmdBeginQuery(cmdbuf, pipeline_queries, 0, 0);
 
-		VkClearColorValue clear_color = { 0.0f, 0.0f, 0.0f, 1.0f };
+		VkClearColorValue clear_color = { 0.478f, 0.65f, 1.0f, 1.0f };
 		VkClearDepthStencilValue depth_clear = { 1.0f, 0 };
 
 		VkRenderingAttachmentInfo color_attachment = {};
