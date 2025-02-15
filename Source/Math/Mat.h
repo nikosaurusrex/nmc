@@ -29,7 +29,7 @@ union mat4 {
     }
 };
 
-mat4 Ortho(float left, float right, float bottom, float top);
+mat4 Ortho(float left, float right, float bottom, float top, float near, float far);
 mat4 Perspective(float fov, float aspect, float near, float far);
 mat4 LookAt(vec3 eye, vec3 center, vec3 up);
 mat4 Scale(mat4 m, vec3 v);

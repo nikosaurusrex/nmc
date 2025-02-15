@@ -148,13 +148,18 @@ internal void InitLogicalDevice(const char **device_extensions, u32 device_exten
     features11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
     features11.shaderDrawParameters = true;
 
+    VkPhysicalDeviceVulkan12Features features12 = {};
+    features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    features12.runtimeDescriptorArray = true;
+
     VkPhysicalDeviceVulkan13Features features13 = {};
     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
     features13.dynamicRendering = true;
     features13.synchronization2 = true;
 
     features.pNext = &features11;
-    features11.pNext = &features13;
+    features11.pNext = &features12;
+    features12.pNext = &features13;
 
     VkDeviceCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -339,7 +344,7 @@ void CreateSwapchain(Swapchain *swapchain, VkCommandPool cmdpool) {
 
     for (u32 i = 0; i < formats_count; ++i) {
         VkSurfaceFormatKHR format = formats[i];
-        if (format.format == VK_FORMAT_B8G8R8A8_UNORM) {
+        if (format.format == VK_FORMAT_B8G8R8A8_SRGB) {
             sc->format = format;
             break;
         }
@@ -622,20 +627,23 @@ void DestroyImage(Image image) {
     vmaDestroyImage(vulkan_state.allocator, image.handle, image.allocation);
 }
 
-Texture CreateTexture(u32 width, u32 height, VkFormat format, VkImageAspectFlags aspect_mask, VkImageUsageFlags usage) {
+Texture CreateTexture(u32 width, u32 height, VkFormat format, VkImageAspectFlags aspect_mask, VkImageUsageFlags usage, VkSamplerCreateInfo sampler_info) {
     Texture result = {};
 
     result.image = CreateImage(width, height, format, 1, aspect_mask, usage);
-
-    VkSamplerCreateInfo sampler_info = {};
-    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 
     vkCreateSampler(vulkan_state.ldevice, &sampler_info, 0, &result.descriptor.sampler);
 
     result.descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     result.descriptor.imageView = result.image.view;
-
     return result;
+}
+
+Texture CreateTexture(u32 width, u32 height, VkFormat format, VkImageAspectFlags aspect_mask, VkImageUsageFlags usage) {
+    VkSamplerCreateInfo sampler_info = {};
+    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+
+    return CreateTexture(width, height, format, aspect_mask, usage, sampler_info);
 }
 
 internal u32 GetMipLevels(u32 width, u32 height) {
@@ -725,11 +733,11 @@ Texture LoadTextureFromFile(const char *path, VkCommandPool cmdpool) {
 			rgba_pixels[rgba_idx + 3] = 255;
 		}
 
-		result = CreateTextureFromPixels(w, h, 4, VK_FORMAT_R8G8B8A8_UNORM, rgba_pixels, sampler_info, cmdpool);
+		result = CreateTextureFromPixels(w, h, 4, VK_FORMAT_R8G8B8A8_SRGB, rgba_pixels, sampler_info, cmdpool);
 
 		HeapFree(rgba_pixels);
 	} else {
-		result = CreateTextureFromPixels(w, h, channels, VK_FORMAT_R8G8B8A8_UNORM, pixels, sampler_info, cmdpool);
+		result = CreateTextureFromPixels(w, h, channels, VK_FORMAT_R8G8B8A8_SRGB, pixels, sampler_info, cmdpool);
 	}
 	
 	free(pixels);
@@ -1073,6 +1081,17 @@ void BindBuffer(Pipeline *p, u32 binding, Buffer *buffer, VkDeviceSize size, VkD
 	write.pBufferInfo = &desc;
 
 	vkUpdateDescriptorSets(vulkan_state.ldevice, 1, &write, 0, 0);
+}
+
+void BindTexture(Pipeline *p, u32 binding, Texture texture) {
+	VkWriteDescriptorSet desc_write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+	desc_write.dstSet = p->desc_set;
+	desc_write.dstBinding = binding;
+    desc_write.descriptorCount = 1;
+	desc_write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	desc_write.pImageInfo = &texture.descriptor;
+
+	vkUpdateDescriptorSets(vulkan_state.ldevice, 1, &desc_write, 0, 0);
 }
 
 void BindTextureArray(Pipeline *p, u32 binding, TextureArray *textures) {

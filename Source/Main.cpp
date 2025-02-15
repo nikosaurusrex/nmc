@@ -15,6 +15,11 @@ enum {
 	MAX_INSTANCE_COUNT = 10000000
 };
 
+enum {
+	SHADOW_MAP_WIDTH = 2048,
+	SHADOW_MAP_HEIGHT = 2048,
+};
+
 struct FrustumInfo {
 	mat4 view_matrix;
 	vec4 planes[6];
@@ -22,6 +27,7 @@ struct FrustumInfo {
 };
 
 struct Renderer {
+	Pipeline shadow_pipeline;
 	Pipeline render_pipeline;
 	Pipeline cull_pipeline;
 	Pipeline cull_pass_pipeline;
@@ -33,11 +39,15 @@ struct Renderer {
 	Buffer indirect_buffer;
 	Buffer frustum_info_buffer;
 	Buffer globals_buffer;
+	Buffer light_space_buffer;
+	Texture shadow_map;
 };
 
 struct Globals {
 	mat4 proj_matrix;
 	mat4 view_matrix;
+	mat4 light_space_matrix;
+	vec3 camera_pos;
 };
 
 struct Camera {
@@ -87,7 +97,7 @@ Player CreatePlayer() {
 	result.position = vec3(10.0, 14.0f, 10.0f);
 	result.velocity = vec3(0);
 	result.acceleration = vec3(0);
-	result.yaw = 125.0f;
+	result.yaw = 0.0f;
 	result.pitch = 0;
 	result.on_ground = 1;
 	result.flying = 0;
@@ -99,11 +109,11 @@ void ResizePlayerCamera(Camera *c, float w, float h) {
 	c->width = w;
 	c->height = h;
 
-	mat4 proj_matrix = Perspective(PI32 / 3.0f, c->width / c->height, 0, 1000.0f);
+	mat4 proj_matrix = Perspective(PI32 / 3.0f, c->width / c->height, 0.1f, 1000.f);
 	c->proj_matrix = proj_matrix;
 }
 
-void UploadPlayerCameraMatrices(Player *p, Renderer *r, VkCommandBuffer cmdbuf) {
+void UploadPlayerCameraMatrices(Player *p, Renderer *r, mat4 light_space_matrix, VkCommandBuffer cmdbuf) {
 	Camera *c = &p->camera;
 
 	vec3 pos = p->position + vec3(0, eye_height, 0);
@@ -111,7 +121,7 @@ void UploadPlayerCameraMatrices(Player *p, Renderer *r, VkCommandBuffer cmdbuf) 
 
 	c->view_matrix = view_matrix;
 
-	Globals globals = { c->proj_matrix, view_matrix };
+	Globals globals = { c->proj_matrix, view_matrix, light_space_matrix, pos };
     UpdateRendererBuffer(r->globals_buffer, sizeof(globals), &globals, cmdbuf);
 }
 
@@ -152,16 +162,18 @@ void UpdatePlayer(Player *p, float df) {
     Int2 mouse_delta = GetMouseDeltaPosition();
 
 	if (mouse_delta.x != 0 || mouse_delta.y != 0) {
-		p->yaw += mouse_delta.x * 0.01f;
-		p->pitch -= mouse_delta.y * 0.01f;
+		p->yaw += mouse_delta.x * 0.001f;
+		p->pitch -= mouse_delta.y * 0.001f;
 
-		p->yaw = FMod(p->yaw, 360);
-		p->pitch = Clamp(p->pitch, -89.0f, 89.0f);
+		p->yaw = FMod(p->yaw, 2*PI32);
+
+		const float eps = (PI32 / 2) - 0.02f;
+		p->pitch = Clamp(p->pitch, -eps, eps);
 
 		vec3 front;
-		front.x = Cos(ToRadians(p->yaw)) * Cos(ToRadians(p->pitch));
-		front.y = Sin(ToRadians(p->pitch));
-		front.z = Sin(ToRadians(p->yaw)) * Cos(ToRadians(p->pitch));
+		front.x = Cos(p->yaw) * Cos(p->pitch);
+		front.y = Sin(p->pitch);
+		front.z = Sin(p->yaw) * Cos(p->pitch);
 		front = Normalize(front);
 
 		p->camera.front = front;
@@ -237,10 +249,24 @@ void UpdatePlayer(Player *p, float df) {
 		BlockRef place = GetBlockRef(intersect.prev_pos);
 		if (hit.c && place.c) {
 			if (GetBlock(hit) != BLOCK_AIR && GetBlock(place) == BLOCK_AIR) {
-				PlaceBlock(place, BLOCK_AIR);
+				PlaceBlock(place, BLOCK_OAK_LOG);
 			}
 		}
 	}
+}
+
+mat4 CalculateLightSpaceTransform(Player *p) {
+	vec3 player_eye = p->position + vec3(0, eye_height, 0);
+	const float shadow_dist = 50.0f;
+	const float shadow_range = 50.0f;
+
+	vec3 light_dir = Normalize(vec3(1.0f, -1.0f, 1.0f));
+	vec3 light_pos = player_eye - light_dir * shadow_dist;
+	mat4 light_view = LookAt(light_pos, player_eye, vec3(0, 1, 0));
+	mat4 light_proj = Ortho(-shadow_range, shadow_range, -shadow_range, shadow_range, 0.1f, 1000.0f);
+	mat4 light_vp = light_proj * light_view;
+
+	return light_vp;
 }
 
 Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
@@ -249,14 +275,15 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 
 	// Graphics pipeline
 	VkDescriptorSetLayoutBinding bindings[] = {
-		{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
+		{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0 },
 		{1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
-		{2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, 0}
+		{2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, 0},
+		{3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0}
 	};
 
 	Shader shaders[] = {
-		{"Assets/Shaders/Core-Vert.spv", VK_SHADER_STAGE_VERTEX_BIT},
-		{"Assets/Shaders/Core-Frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT},
+		{"Assets/Shaders/Core.vert.spv", VK_SHADER_STAGE_VERTEX_BIT},
+		{"Assets/Shaders/Core.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT},
 	};
 
 	GraphicsPipelineOptions options = {};
@@ -274,6 +301,48 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 
 	result.render_pipeline = CreateGraphicsPipeline(&options);
 
+	// shadow pipeline
+	VkDescriptorSetLayoutBinding shadow_bindings[] = {
+		{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0 },
+		{1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
+	};
+
+	Shader shadow_shaders[] = {
+		{"Assets/Shaders/Shadow.vert.spv", VK_SHADER_STAGE_VERTEX_BIT},
+		{"Assets/Shaders/Shadow.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT},
+	};
+
+	GraphicsPipelineOptions shadow_options = {};
+	shadow_options.bindings = shadow_bindings;
+	shadow_options.bindings_count = ArrayCount(shadow_bindings);
+	shadow_options.color_formats = 0;
+	shadow_options.color_formats_count = 0;
+	shadow_options.depth_format = VK_FORMAT_D32_SFLOAT;
+	shadow_options.polygon_mode = VK_POLYGON_MODE_FILL;
+	shadow_options.cull_mode = VK_CULL_MODE_BACK_BIT;
+	shadow_options.front_face = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+	shadow_options.depth_test = VK_TRUE;
+	shadow_options.shaders = shadow_shaders;
+	shadow_options.shaders_count = ArrayCount(shadow_shaders);
+
+	result.shadow_pipeline = CreateGraphicsPipeline(&shadow_options);
+
+	VkSamplerCreateInfo shadow_sampler = {};
+	shadow_sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+	shadow_sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+	shadow_sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+	shadow_sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+	result.shadow_map = CreateTexture(SHADOW_MAP_WIDTH, SHADOW_MAP_HEIGHT, VK_FORMAT_D32_SFLOAT,
+		VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, shadow_sampler
+	);
+
+	VkImageMemoryBarrier2 shadow_map_barrier = CreateImageBarrier(result.shadow_map.image.handle, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+		VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+		VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
+	PipelineImageBarriers(cmdbuf, 0, &shadow_map_barrier, 1);
+
+	result.light_space_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(mat4), 0);
+
 	// Culling pipeline
 	VkDescriptorSetLayoutBinding culling_bindings[] = {
 		{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0},
@@ -283,7 +352,7 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 	};
 
 	Shader culling_shader = {
-		"Assets/Shaders/Culling-Comp.spv", VK_SHADER_STAGE_COMPUTE_BIT
+		"Assets/Shaders/Culling.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT
 	};
 
 	result.cull_pipeline = CreateComputePipeline(culling_shader, culling_bindings, ArrayCount(culling_bindings));
@@ -295,7 +364,7 @@ Renderer CreateRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 	};
 
 	Shader culling_pass_shader = {
-		"Assets/Shaders/CullingPass-Comp.spv", VK_SHADER_STAGE_COMPUTE_BIT
+		"Assets/Shaders/CullingPass.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT
 	};
 
 	result.cull_pass_pipeline = CreateComputePipeline(culling_pass_shader, culling_pass_bindings, ArrayCount(culling_pass_bindings));
@@ -327,8 +396,11 @@ void DestroyRenderer(Renderer *r) {
 	DestroyBuffer(r->frustum_info_buffer);
 	DestroyBuffer(r->indirect_buffer);
 	DestroyBuffer(r->globals_buffer);
+	DestroyBuffer(r->light_space_buffer);
+	DestroyTexture(r->shadow_map);
 
 	DestroyPipeline(r->render_pipeline);
+	DestroyPipeline(r->shadow_pipeline);
 	DestroyPipeline(r->cull_pipeline);
 	DestroyPipeline(r->cull_pass_pipeline);
 }
@@ -497,17 +569,108 @@ void Cull(Renderer *r, Camera *camera, VkCommandBuffer cmdbuf, u32 instance_coun
     PipelineBufferBarriers(cmdbuf, VK_DEPENDENCY_DEVICE_GROUP_BIT, cull_barriers, 2);
 }
 
-void Render(Renderer *r, TextureArray *textures, VkCommandBuffer cmdbuf, u32 instance_count) {
+void ShadowPass(Renderer *r, VkCommandBuffer cmdbuf, u32 instance_count) {
 	if (instance_count == 0) {
 		return;
 	}
+
+	VkClearDepthStencilValue depth_clear = { 1.0f, 0 };
+
+	VkRenderingAttachmentInfo depth_attachment = {};
+	depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+	depth_attachment.imageView = r->shadow_map.image.view;
+	depth_attachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+	depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+	depth_attachment.clearValue.depthStencil = depth_clear;
+
+	VkRenderingInfo rendering_info = {};
+	rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+	rendering_info.renderArea.extent.width = SHADOW_MAP_WIDTH;
+	rendering_info.renderArea.extent.height = SHADOW_MAP_HEIGHT;
+	rendering_info.layerCount = 1;
+	rendering_info.colorAttachmentCount = 0;
+	rendering_info.pColorAttachments = 0;
+	rendering_info.pDepthAttachment = &depth_attachment;
+	vkCmdBeginRendering(cmdbuf, &rendering_info);
+
+	VkViewport viewport = {};
+	viewport.width = SHADOW_MAP_WIDTH;
+	viewport.height = SHADOW_MAP_HEIGHT;
+	viewport.maxDepth = 1;
+
+	VkRect2D scissor = {};
+	scissor.extent.width = SHADOW_MAP_WIDTH;
+	scissor.extent.height = SHADOW_MAP_HEIGHT;
+
+	vkCmdSetViewport(cmdbuf, 0, 1, &viewport);
+	vkCmdSetScissor(cmdbuf, 0, 1, &scissor);
+
+	BindPipeline(&r->shadow_pipeline, cmdbuf);
+	BindBuffer(&r->shadow_pipeline, 0, &r->light_space_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	BindBuffer(&r->shadow_pipeline, 1, &r->culled_instance_buffer, instance_count * sizeof(InstanceData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+	vkCmdDrawIndirect(cmdbuf, r->indirect_buffer.handle, 0, 1, sizeof(VkDrawIndirectCommand));
+
+	vkCmdEndRendering(cmdbuf);
+}
+
+void Render(Renderer *r, TextureArray *textures, Swapchain *swapchain, VkImageView color_view,
+		VkImageView depth_view, VkCommandBuffer cmdbuf, u32 instance_count) {
+	if (instance_count == 0) {
+		return;
+	}
+
+	VkClearColorValue clear_color = { 0.478f, 0.65f, 1.0f, 1.0f };
+	VkClearDepthStencilValue depth_clear = { 1.0f, 0 };
+
+	VkRenderingAttachmentInfo color_attachment = {};
+	color_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+	color_attachment.imageView = color_view;
+	color_attachment.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+	color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+	color_attachment.clearValue.color = clear_color;
+
+	VkRenderingAttachmentInfo depth_attachment = {};
+	depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+	depth_attachment.imageView = depth_view;
+	depth_attachment.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+	depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+	depth_attachment.clearValue.depthStencil = depth_clear;
+
+	VkRenderingInfo rendering_info = {};
+	rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+	rendering_info.renderArea.extent.width = swapchain->width;
+	rendering_info.renderArea.extent.height = swapchain->height;
+	rendering_info.layerCount = 1;
+	rendering_info.colorAttachmentCount = 1;
+	rendering_info.pColorAttachments = &color_attachment;
+	rendering_info.pDepthAttachment = &depth_attachment;
+	vkCmdBeginRendering(cmdbuf, &rendering_info);
+
+	VkViewport viewport = {};
+	viewport.width = float(swapchain->width);
+	viewport.height = float(swapchain->height);
+	viewport.maxDepth = 1;
+
+	VkRect2D scissor = {};
+	scissor.extent.width = swapchain->width;
+	scissor.extent.height = swapchain->height;
+
+	vkCmdSetViewport(cmdbuf, 0, 1, &viewport);
+	vkCmdSetScissor(cmdbuf, 0, 1, &scissor);
 
 	BindPipeline(&r->render_pipeline, cmdbuf);
 	BindBuffer(&r->render_pipeline, 0, &r->globals_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 	BindBuffer(&r->render_pipeline, 1, &r->culled_instance_buffer, instance_count * sizeof(InstanceData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	BindTextureArray(&r->render_pipeline, 2, textures);
+	BindTexture(&r->render_pipeline, 3, r->shadow_map);
 
 	vkCmdDrawIndirect(cmdbuf, r->indirect_buffer.handle, 0, 1, sizeof(VkDrawIndirectCommand));
+
+	vkCmdEndRendering(cmdbuf);
 }
 
 void LoadTextures(TextureArray *textures, VkCommandPool cmdpool) {
@@ -545,18 +708,16 @@ void NKMain() {
 
 	VkQueryPool pipeline_queries = CreateQueryPool(1, VK_QUERY_TYPE_PIPELINE_STATISTICS);
 
-	Renderer renderer = CreateRenderer(cmdpool, cmdbuf, color_target.format, depth_target.format);
+	VkCommandBuffer init_cmdbuf = BeginTempCommandBuffer(cmdpool);
+	Renderer renderer = CreateRenderer(cmdpool, init_cmdbuf, color_target.format, depth_target.format);
 
 	Player player = CreatePlayer();
 	ResizePlayerCamera(&player.camera, float(swapchain.width), float(swapchain.height));
 
-	{
-		VkCommandBuffer temp_cmdbuf = BeginTempCommandBuffer(cmdpool);
-
-		UploadPlayerCameraMatrices(&player, &renderer, temp_cmdbuf);
-
-		EndTempCommandBuffer(cmdpool, temp_cmdbuf);
-	}
+	mat4 light_space_matrix = CalculateLightSpaceTransform(&player);
+	UploadPlayerCameraMatrices(&player, &renderer, light_space_matrix, init_cmdbuf);
+	UpdateRendererBuffer(renderer.light_space_buffer, sizeof(mat4), &light_space_matrix, init_cmdbuf);
+	EndTempCommandBuffer(cmdpool, init_cmdbuf);
 
 	TextureArray textures = CreateTextureArray(TEXTURE_COUNT);
 	LoadTextures(&textures, cmdpool);
@@ -624,7 +785,9 @@ void NKMain() {
 			continue;
 		}
 
-		UploadPlayerCameraMatrices(&player, &renderer, cmdbuf);
+		mat4 light_space_matrix = CalculateLightSpaceTransform(&player);
+		UploadPlayerCameraMatrices(&player, &renderer, light_space_matrix, cmdbuf);
+		UpdateRendererBuffer(renderer.light_space_buffer, sizeof(mat4), &light_space_matrix, cmdbuf);
 
 		u32 instance_count = UpdateBlockInstances(&renderer, cmdbuf, prev_instance_count);
 		prev_instance_count = instance_count;
@@ -634,50 +797,9 @@ void NKMain() {
 		vkCmdResetQueryPool(cmdbuf, pipeline_queries, 0, 1);
 		vkCmdBeginQuery(cmdbuf, pipeline_queries, 0, 0);
 
-		VkClearColorValue clear_color = { 0.478f, 0.65f, 1.0f, 1.0f };
-		VkClearDepthStencilValue depth_clear = { 1.0f, 0 };
+		ShadowPass(&renderer, cmdbuf, instance_count);
+		Render(&renderer, &textures, &swapchain, color_target.view, depth_target.view, cmdbuf, instance_count);
 
-		VkRenderingAttachmentInfo color_attachment = {};
-		color_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-		color_attachment.imageView = color_target.view;
-		color_attachment.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
-		color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-		color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-		color_attachment.clearValue.color = clear_color;
-
-		VkRenderingAttachmentInfo depth_attachment = {};
-		depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-		depth_attachment.imageView = depth_target.view;
-		depth_attachment.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
-		depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-		depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-		depth_attachment.clearValue.depthStencil = depth_clear;
-
-		VkRenderingInfo rendering_info = {};
-		rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-		rendering_info.renderArea.extent.width = swapchain.width;
-		rendering_info.renderArea.extent.height = swapchain.height;
-		rendering_info.layerCount = 1;
-		rendering_info.colorAttachmentCount = 1;
-		rendering_info.pColorAttachments = &color_attachment;
-		rendering_info.pDepthAttachment = &depth_attachment;
-		vkCmdBeginRendering(cmdbuf, &rendering_info);
-
-		VkViewport viewport = {};
-		viewport.width = float(swapchain.width);
-		viewport.height = float(swapchain.height);
-		viewport.maxDepth = 1;
-
-		VkRect2D scissor = {};
-		scissor.extent.width = swapchain.width;
-		scissor.extent.height = swapchain.height;
-
-		vkCmdSetViewport(cmdbuf, 0, 1, &viewport);
-		vkCmdSetScissor(cmdbuf, 0, 1, &scissor);
-
-		Render(&renderer, &textures, cmdbuf, instance_count);
-
-		vkCmdEndRendering(cmdbuf);
 		vkCmdEndQuery(cmdbuf, pipeline_queries, 0);
 
 		PresentSwapchain(&swapchain, cmdbuf, color_target);

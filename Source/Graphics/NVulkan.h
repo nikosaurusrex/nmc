@@ -120,6 +120,7 @@ Image CreateImage(u32 width, u32 height, VkFormat format, u32 mip_levels, VkImag
 Image CreateDepthImage(Swapchain *swapchain, VkCommandPool cmdpool);
 void DestroyImage(Image image);
 
+Texture CreateTexture(u32 width, u32 height, VkFormat format, VkImageAspectFlags aspect_mask, VkImageUsageFlags usage, VkSamplerCreateInfo sampler_info);
 Texture CreateTexture(u32 width, u32 height, VkFormat format, VkImageAspectFlags aspect_mask, VkImageUsageFlags usage);
 Texture CreateTextureFromPixels(u32 width, u32 height, u32 channels, VkFormat format, u8 *pixels,
     VkSamplerCreateInfo sampler_info, VkCommandPool cmdpool);
@@ -145,6 +146,7 @@ void DestroyPipeline(Pipeline pipeline);
 
 void BindPipeline(Pipeline *p, VkCommandBuffer cmdbuf);
 void BindBuffer(Pipeline *p, u32 binding, Buffer *buffer, VkDeviceSize size, VkDescriptorType type);
+void BindTexture(Pipeline *p, u32 binding, Texture texture);
 void BindTextureArray(Pipeline *p, u32 binding, TextureArray *textures);
 
 void CopyBuffer(VkBuffer dst, VkBuffer src, VkDeviceSize size, VkCommandPool cmdpool);

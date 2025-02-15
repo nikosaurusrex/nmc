@@ -10,8 +10,7 @@ find_package(Vulkan REQUIRED)
 include_directories(${Vulkan_INCLUDE_DIRS})
 
 file(GLOB_RECURSE SOURCES "Source/*.cpp" "Source/*.h")
-file(GLOB_RECURSE SHADER_GFX_SOURCES "Assets/Shaders/*.gfx.slang")
-file(GLOB_RECURSE SHADER_COMP_SOURCES "Assets/Shaders/*.comp.slang")
+file(GLOB_RECURSE SHADER_SOURCES "Assets/Shaders/*.glsl")
 
 add_executable(nmc ${SOURCES})
 
@@ -26,41 +25,18 @@ endif()
 message(STATUS "Found Vulkan: ${Vulkan_LIBRARIES}")
 
 set(SPIRV_FILES "")
-foreach(SHADER_SOURCE ${SHADER_GFX_SOURCES})
-    get_filename_component(FILE_NAME ${SHADER_SOURCE} NAME_WE)
+foreach(SHADER_SOURCE ${SHADER_SOURCES})
+    get_filename_component(FILE_NAME ${SHADER_SOURCE} NAME_WLE)
 
-    set(VERT_SPV ${CMAKE_BINARY_DIR}/Assets/Shaders/${FILE_NAME}-Vert.spv)
-    set(FRAG_SPV ${CMAKE_BINARY_DIR}/Assets/Shaders/${FILE_NAME}-Frag.spv)
-
-    add_custom_command(
-        OUTPUT ${VERT_SPV}
-        COMMAND slangc ${SHADER_SOURCE} -o ${VERT_SPV} -entry VSMain
-        DEPENDS ${SHADER_SOURCE}
-        COMMENT "Compiling vertex shader ${SHADER_SOURCE}"
-    )
+    set(SHADER_SPV ${CMAKE_BINARY_DIR}/Assets/Shaders/${FILE_NAME}.spv)
 
     add_custom_command(
-        OUTPUT ${FRAG_SPV}
-        COMMAND slangc ${SHADER_SOURCE} -o ${FRAG_SPV} -entry PSMain
+        OUTPUT ${SHADER_SPV}
+        COMMAND glslangValidator --target-env vulkan1.3 ${SHADER_SOURCE} -o ${SHADER_SPV}
         DEPENDS ${SHADER_SOURCE}
-        COMMENT "Compiling fragment shader ${SHADER_SOURCE}"
+        COMMENT "Compiling shader ${SHADER_SOURCE}"
     )
-    list(APPEND SPIRV_FILES ${VERT_SPV} ${FRAG_SPV})
-endforeach()
-
-foreach(SHADER_SOURCE ${SHADER_COMP_SOURCES})
-    get_filename_component(FILE_NAME ${SHADER_SOURCE} NAME_WE)
-
-    set(COMP_SPV ${CMAKE_BINARY_DIR}/Assets/Shaders/${FILE_NAME}-Comp.spv)
-
-    add_custom_command(
-        OUTPUT ${COMP_SPV}
-        COMMAND slangc ${SHADER_SOURCE} -o ${COMP_SPV} -stage compute -entry CSMain
-        DEPENDS ${SHADER_SOURCE}
-        COMMENT "Compiling compute shader ${SHADER_SOURCE}"
-    )
-
-    list(APPEND SPIRV_FILES ${COMP_SPV})
+    list(APPEND SPIRV_FILES ${SHADER_SPV})
 endforeach()
 
 add_custom_target(

@@ -102,6 +102,14 @@ union vec4 {
     vec4(f32x4 _w) {
         Ew = _w;
     }
+
+    float &operator[](uint idx) {
+        return E[idx];
+    }
+
+    float operator[](uint idx) const {
+        return E[idx];
+    }
 };
 
 vec4 operator+(vec4 a, vec4 b);
