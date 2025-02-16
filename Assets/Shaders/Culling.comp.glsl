@@ -12,6 +12,14 @@ struct FrustumInfo {
     uint instance_count;
 };
 
+struct IndirectDrawCommand {
+    uint index_count;
+    uint instance_count;
+    uint first_index;
+    int vertex_offset;
+    uint first_instance;
+};
+
 layout(set=0, binding=0) readonly buffer InstanceBuffer {
     InstanceData instances[];
 };
@@ -20,8 +28,8 @@ layout(set=0, binding=1) writeonly buffer CulledInstanceBuffer {
     InstanceData culled_instances[];
 };
 
-layout(set=0, binding=2) writeonly buffer VisibleCountBuffer {
-    uint visible_count;
+layout(set=0, binding=2) writeonly buffer DrawCommandBuffer {
+    IndirectDrawCommand draw_command;
 };
 
 layout(set=0, binding=3) uniform FrustumInfoBuffer {
@@ -52,7 +60,7 @@ void main() {
     InstanceData id = instances[idx];
 
     if (IsInsideFrustum(vec4(id.px, id.py, id.pz, 1.0))) {
-        uint count = atomicAdd(visible_count, 1);
+        uint count = atomicAdd(draw_command.instance_count, 1);
         culled_instances[count] = id;
     }
 }

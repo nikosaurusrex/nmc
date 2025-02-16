@@ -11,6 +11,10 @@ struct GMRandom {
 	u32 state;
 };
 
+enum {
+	WATER_LEVEL = 15,
+};
+
 void GenerateMap() {
 	int width = CHUNK_X * WORLD_CHUNK_COUNT_X;
 	int height = CHUNK_Z * WORLD_CHUNK_COUNT_Z;
@@ -49,20 +53,30 @@ void GenerateMap() {
 
 						int height = heightmap[wz * width + wx];
 						int ydiff = height - c->world_pos.y;
+						int water_height = WATER_LEVEL - height;
+
 						if (ydiff > 0) {
 							for (int i = 0; i < Min(ydiff, CHUNK_Y); ++i) {
 								int wy = c->world_pos.y + i;
 
 								Block block;
 								int yd = height - wy;
-								if (yd == 1) {
+								if (yd == 1 && water_height <= 0) {
 									block = BLOCK_GRASS;
-								} else if (yd > 1 && yd <= 4) {
-									block = BLOCK_DIRT;
-								} else {
+								} else if (yd > 4) {
 									block = BLOCK_STONE;
+								} else {
+									block = BLOCK_DIRT;
 								}
 
+								PlaceBlock(c, bx, i, bz, block);
+							}
+						}
+						if (water_height > 0 && c->world_pos.y < WATER_LEVEL) {
+							for (int i = ydiff; i < Min(ydiff + water_height, CHUNK_Y); ++i) {
+								int wy = c->world_pos.y + i;
+
+								Block block = BLOCK_WATER;
 								PlaceBlock(c, bx, i, bz, block);
 							}
 						}

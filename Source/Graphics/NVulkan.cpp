@@ -956,8 +956,8 @@ Pipeline CreateGraphicsPipeline(GraphicsPipelineOptions *options) {
 
     VkPipelineDepthStencilStateCreateInfo depth_stencil_state = {};
     depth_stencil_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depth_stencil_state.depthTestEnable = options->depth_test;
-    depth_stencil_state.depthWriteEnable = options->depth_test;
+    depth_stencil_state.depthTestEnable = options->depth_read;
+    depth_stencil_state.depthWriteEnable = options->depth_write;
     depth_stencil_state.depthCompareOp = VK_COMPARE_OP_LESS;
 
     VkPipelineViewportStateCreateInfo viewport_stage = {};

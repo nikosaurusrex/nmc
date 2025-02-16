@@ -69,7 +69,8 @@ struct GraphicsPipelineOptions {
     VkPolygonMode polygon_mode;
     VkCullModeFlags cull_mode;
     VkFrontFace front_face;
-    VkBool32 depth_test;
+    VkBool32 depth_read;
+    VkBool32 depth_write;
     Shader *shaders;
     u32 shaders_count;
 };

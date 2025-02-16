@@ -172,6 +172,17 @@ mat4 Transpose(mat4 m) {
     return result;
 }
 
+void ExtractFrustumPlanes(mat4 proj, vec4 dest[6]) {
+    mat4 t = Transpose(proj);
+
+	dest[0] = Normalize(t[3] + t[0]); // left
+	dest[1] = Normalize(t[3] - t[0]); // right
+	dest[2] = Normalize(t[3] + t[1]); // top
+	dest[3] = Normalize(t[3] - t[1]); // bottom
+	dest[4] = Normalize(t[3] + t[2]); // near
+	dest[5] = Normalize(t[3] - t[2]); // far
+}
+
 void PrintMat(mat4 m) {
     Print("| %.2f, %.2f, %.2f, %.2f |\n", m[0][0], m[0][1], m[0][2], m[0][3]);
     Print("| %.2f, %.2f, %.2f, %.2f |\n", m[1][0], m[1][1], m[1][2], m[1][3]);

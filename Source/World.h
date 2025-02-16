@@ -1,4 +1,4 @@
-#pragma
+#pragma once
 
 #include "General.h"
 #include "Math/Vec.h"
@@ -26,6 +26,7 @@ enum {
 
 enum {
 	BLOCK_AIR,
+	BLOCK_WATER,
 	BLOCK_DIRT,
 	BLOCK_GRASS,
 	BLOCK_OAK_LOG,
@@ -37,6 +38,7 @@ enum {
 };
 
 enum {
+	TEXTURE_WATER,
 	TEXTURE_DIRT,
 	TEXTURE_GRASS_SIDE,
 	TEXTURE_GRASS_TOP,
@@ -63,6 +65,7 @@ struct Chunk {
 	
 	InstanceData *cached_instance_data;
 	u32 instance_count;
+	u32 water_instance_count;
 	b8 dirty;
 };
 
