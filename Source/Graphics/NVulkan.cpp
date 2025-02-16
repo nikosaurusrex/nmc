@@ -842,13 +842,25 @@ void PipelineBufferBarriers(VkCommandBuffer cmdbuf, VkDependencyFlags flags, VkB
     vkCmdPipelineBarrier2(cmdbuf, &info);
 }
 
-void CreateDescriptorSet(Pipeline *p, VkDescriptorSetLayoutBinding *bindings, u32 bindings_count) {
+VkDescriptorSetLayout CreateDescriptorSetLayout(VkDescriptorSetLayoutBinding *bindings, u32 bindings_count) {
     VkDescriptorSetLayoutCreateInfo layout_info = {};
     layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layout_info.bindingCount = bindings_count;
     layout_info.pBindings = bindings;
 
-    VK_CHECK(vkCreateDescriptorSetLayout(vulkan_state.ldevice, &layout_info, 0, &p->desc_layout));
+    VkDescriptorSetLayout layout;
+    VK_CHECK(vkCreateDescriptorSetLayout(vulkan_state.ldevice, &layout_info, 0, &layout));
+
+    return layout;
+}
+
+DescriptorSet CreateDescriptorSet(VkDescriptorSetLayoutBinding *bindings, u32 bindings_count) {
+    return CreateDescriptorSet(bindings, bindings_count, CreateDescriptorSetLayout(bindings, bindings_count));
+}
+
+DescriptorSet CreateDescriptorSet(VkDescriptorSetLayoutBinding *bindings, u32 bindings_count, VkDescriptorSetLayout layout) {
+    DescriptorSet result = {};
+    result.layout = layout;
 
     VkDescriptorPoolSize *pool_sizes = (VkDescriptorPoolSize *) HeapAlloc(bindings_count * sizeof(VkDescriptorPoolSize));
     u32 pool_size_count = 0;
@@ -883,17 +895,67 @@ void CreateDescriptorSet(Pipeline *p, VkDescriptorSetLayoutBinding *bindings, u3
     pool_info.poolSizeCount = pool_size_count;
     pool_info.pPoolSizes = pool_sizes;
 
-    VK_CHECK(vkCreateDescriptorPool(vulkan_state.ldevice, &pool_info, 0, &p->desc_pool));
+    VK_CHECK(vkCreateDescriptorPool(vulkan_state.ldevice, &pool_info, 0, &result.pool));
 
     VkDescriptorSetAllocateInfo desc_info = {};
     desc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    desc_info.descriptorPool = p->desc_pool;
+    desc_info.descriptorPool = result.pool;
     desc_info.descriptorSetCount = 1;
-    desc_info.pSetLayouts = &p->desc_layout;
+    desc_info.pSetLayouts = &result.layout;
 
-    VK_CHECK(vkAllocateDescriptorSets(vulkan_state.ldevice, &desc_info, &p->desc_set));
+    VK_CHECK(vkAllocateDescriptorSets(vulkan_state.ldevice, &desc_info, &result.handle));
 
     HeapFree(pool_sizes);
+
+    return result;
+}
+
+void DestroyDescriptorSet(DescriptorSet *desc_set) {
+    vkDestroyDescriptorPool(vulkan_state.ldevice, desc_set->pool, 0);
+    if (desc_set->layout != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(vulkan_state.ldevice, desc_set->layout, 0);
+		desc_set->layout = VK_NULL_HANDLE;
+    }
+}
+
+void BindDescriptorSet(DescriptorSet *desc_set, Pipeline *p, VkCommandBuffer cmdbuf) {
+    vkCmdBindDescriptorSets(cmdbuf, p->bind_point, p->layout, 0, 1, &desc_set->handle, 0, 0);
+}
+
+void BindBuffer(DescriptorSet *desc_set, u32 binding, Buffer *buffer, VkDeviceSize size, VkDescriptorType type) {
+	VkDescriptorBufferInfo desc = { buffer->handle, 0, size };
+
+	VkWriteDescriptorSet write = {};
+	write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = desc_set->handle;
+	write.dstBinding = binding;
+	write.descriptorCount = 1;
+    write.descriptorType = type;
+	write.pBufferInfo = &desc;
+
+	vkUpdateDescriptorSets(vulkan_state.ldevice, 1, &write, 0, 0);
+}
+
+void BindTexture(DescriptorSet *desc_set, u32 binding, Texture texture) {
+	VkWriteDescriptorSet desc_write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+	desc_write.dstSet = desc_set->handle;
+	desc_write.dstBinding = binding;
+    desc_write.descriptorCount = 1;
+	desc_write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	desc_write.pImageInfo = &texture.descriptor;
+
+	vkUpdateDescriptorSets(vulkan_state.ldevice, 1, &desc_write, 0, 0);
+}
+
+void BindTextureArray(DescriptorSet *desc_set, u32 binding, TextureArray *textures) {
+	VkWriteDescriptorSet desc_write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+	desc_write.dstSet = desc_set->handle;
+	desc_write.dstBinding = binding;
+	desc_write.descriptorCount = textures->count;
+	desc_write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	desc_write.pImageInfo = textures->descriptors;
+
+	vkUpdateDescriptorSets(vulkan_state.ldevice, 1, &desc_write, 0, 0);
 }
 
 VkPipelineShaderStageCreateInfo LoadShader(Shader shader) {
@@ -921,17 +983,16 @@ VkPipelineShaderStageCreateInfo LoadShader(Shader shader) {
     return result;
 }
 
-Pipeline CreatePipeline(VkDescriptorSetLayoutBinding *bindings, u32 bindings_count, VkPipelineBindPoint bind_point) {
+Pipeline CreatePipeline(VkPipelineBindPoint bind_point) {
     Pipeline result = {};
 
-    CreateDescriptorSet(&result, bindings, bindings_count);
     result.bind_point = bind_point;
 
     return result;
 }
 
-Pipeline CreateGraphicsPipeline(GraphicsPipelineOptions *options) {
-    Pipeline result = CreatePipeline(options->bindings, options->bindings_count, VK_PIPELINE_BIND_POINT_GRAPHICS);
+Pipeline CreateGraphicsPipeline(GraphicsPipelineOptions *options, VkDescriptorSetLayout desc_layout) {
+    Pipeline result = CreatePipeline(VK_PIPELINE_BIND_POINT_GRAPHICS);
 
     VkPipelineShaderStageCreateInfo *shader_stages = (VkPipelineShaderStageCreateInfo *) HeapAlloc(options->shaders_count * sizeof(VkPipelineShaderStageCreateInfo));
     for (u32 i = 0; i < options->shaders_count; ++i) {
@@ -974,12 +1035,12 @@ Pipeline CreateGraphicsPipeline(GraphicsPipelineOptions *options) {
     VkPipelineColorBlendAttachmentState color_blend_attachment = {};
     color_blend_attachment.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    color_blend_attachment.blendEnable = VK_TRUE;
+    color_blend_attachment.blendEnable = options->blend;
     color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
     color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
     color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
 
     VkPipelineColorBlendStateCreateInfo color_blend_stage = {};
@@ -997,7 +1058,7 @@ Pipeline CreateGraphicsPipeline(GraphicsPipelineOptions *options) {
     VkPipelineLayoutCreateInfo layout_info = {};
     layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layout_info.setLayoutCount = 1;
-    layout_info.pSetLayouts = &result.desc_layout;
+    layout_info.pSetLayouts = &desc_layout;
 
     VK_CHECK(vkCreatePipelineLayout(vulkan_state.ldevice, &layout_info, 0, &result.layout));
 
@@ -1033,15 +1094,15 @@ Pipeline CreateGraphicsPipeline(GraphicsPipelineOptions *options) {
     return result;
 }
 
-Pipeline CreateComputePipeline(Shader shader, VkDescriptorSetLayoutBinding *bindings, u32 bindings_count) {
-    Pipeline result = CreatePipeline(bindings, bindings_count, VK_PIPELINE_BIND_POINT_COMPUTE);
+Pipeline CreateComputePipeline(Shader shader, VkDescriptorSetLayout desc_layout) {
+    Pipeline result = CreatePipeline(VK_PIPELINE_BIND_POINT_COMPUTE);
 
     VkPipelineShaderStageCreateInfo stage_info = LoadShader(shader);
 
     VkPipelineLayoutCreateInfo layout_info = {};
     layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layout_info.setLayoutCount = 1;
-    layout_info.pSetLayouts = &result.desc_layout;
+    layout_info.pSetLayouts = &desc_layout;
 
     VK_CHECK(vkCreatePipelineLayout(vulkan_state.ldevice, &layout_info, 0, &result.layout));
 
@@ -1058,51 +1119,12 @@ Pipeline CreateComputePipeline(Shader shader, VkDescriptorSetLayoutBinding *bind
 }
 
 void DestroyPipeline(Pipeline pipeline) {
-    vkDestroyDescriptorPool(vulkan_state.ldevice, pipeline.desc_pool, 0);
-    vkDestroyDescriptorSetLayout(vulkan_state.ldevice, pipeline.desc_layout, 0);
     vkDestroyPipelineLayout(vulkan_state.ldevice, pipeline.layout, 0);
     vkDestroyPipeline(vulkan_state.ldevice, pipeline.handle, 0);
 }
 
 void BindPipeline(Pipeline *p, VkCommandBuffer cmdbuf) {
 	vkCmdBindPipeline(cmdbuf, p->bind_point, p->handle);
-	vkCmdBindDescriptorSets(cmdbuf, p->bind_point, p->layout, 0, 1, &p->desc_set, 0, 0);
-}
-
-void BindBuffer(Pipeline *p, u32 binding, Buffer *buffer, VkDeviceSize size, VkDescriptorType type) {
-	VkDescriptorBufferInfo desc = { buffer->handle, 0, size };
-
-	VkWriteDescriptorSet write = {};
-	write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-	write.dstSet = p->desc_set;
-	write.dstBinding = binding;
-	write.descriptorCount = 1;
-    write.descriptorType = type;
-	write.pBufferInfo = &desc;
-
-	vkUpdateDescriptorSets(vulkan_state.ldevice, 1, &write, 0, 0);
-}
-
-void BindTexture(Pipeline *p, u32 binding, Texture texture) {
-	VkWriteDescriptorSet desc_write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-	desc_write.dstSet = p->desc_set;
-	desc_write.dstBinding = binding;
-    desc_write.descriptorCount = 1;
-	desc_write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	desc_write.pImageInfo = &texture.descriptor;
-
-	vkUpdateDescriptorSets(vulkan_state.ldevice, 1, &desc_write, 0, 0);
-}
-
-void BindTextureArray(Pipeline *p, u32 binding, TextureArray *textures) {
-	VkWriteDescriptorSet desc_write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-	desc_write.dstSet = p->desc_set;
-	desc_write.dstBinding = binding;
-	desc_write.descriptorCount = textures->count;
-	desc_write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	desc_write.pImageInfo = textures->descriptors;
-
-	vkUpdateDescriptorSets(vulkan_state.ldevice, 1, &desc_write, 0, 0);
 }
 
 void CopyBuffer(VkBuffer dst, VkBuffer src, VkDeviceSize size, VkCommandPool cmdpool) {

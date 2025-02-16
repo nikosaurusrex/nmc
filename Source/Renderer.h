@@ -22,6 +22,7 @@ struct FrustumInfo {
 };
 
 struct RenderPass {
+	DescriptorSet desc_set;
 	Pipeline pipeline;
 
 	Buffer instance_buffer;
@@ -31,12 +32,14 @@ struct RenderPass {
 };
 
 struct ShadowPass {
+	DescriptorSet desc_set;
 	Pipeline pipeline;
 	Buffer light_space_buffer;
 	Texture shadow_map;
 };
 
 struct CullPass {
+	DescriptorSet desc_sets[2];
 	Pipeline pipeline;
 	Buffer frustum_info_buffer;
 };
@@ -47,6 +50,7 @@ struct CullCall {
 	Buffer indirect_buffer;
 	mat4 proj_matrix;
 	mat4 view_matrix;
+	u32 desc_set_index;
 	u32 instance_count;
 };
 
@@ -56,6 +60,7 @@ struct Renderer {
 	ShadowPass shadow_pass;
 	CullPass cull_pass;
 
+	TextureArray textures;
 	Buffer globals_buffer;
 };
 
@@ -77,7 +82,7 @@ void DestroyRenderer();
 
 void Cull(Player *p, BlockInstanceCounts instance_counts, VkCommandBuffer cmdbuf);
 void RenderShadow(VkCommandBuffer cmdbuf, BlockInstanceCounts instance_counts);
-void Render(TextureArray *textures, Swapchain *swapchain, VkImageView color_view,
+void Render(Swapchain *swapchain, VkImageView color_view,
 	VkImageView depth_view, VkCommandBuffer cmdbuf, BlockInstanceCounts instance_counts);
 void UploadTransformations(Player *p, VkCommandBuffer cmdbuf);
 

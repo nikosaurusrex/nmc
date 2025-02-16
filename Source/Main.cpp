@@ -13,18 +13,6 @@
 #include "Renderer.h"
 #include "Player.h"
 
-void LoadTextures(TextureArray *textures, VkCommandPool cmdpool) {
-	LoadTextureAtSlot(textures, TEXTURE_WATER, "Assets/Textures/water.png", cmdpool);
-	LoadTextureAtSlot(textures, TEXTURE_DIRT, "Assets/Textures/dirt.png", cmdpool);
-	LoadTextureAtSlot(textures, TEXTURE_GRASS_SIDE, "Assets/Textures/grass_side.png", cmdpool);
-	LoadTextureAtSlot(textures, TEXTURE_GRASS_TOP, "Assets/Textures/grass_top.png", cmdpool);
-	LoadTextureAtSlot(textures, TEXTURE_OAK_LOG_SIDE, "Assets/Textures/log_oak.png", cmdpool);
-	LoadTextureAtSlot(textures, TEXTURE_OAK_LOG_TOP, "Assets/Textures/log_oak_top.png", cmdpool);
-	LoadTextureAtSlot(textures, TEXTURE_STONE, "Assets/Textures/stone.png", cmdpool);
-	LoadTextureAtSlot(textures, TEXTURE_COBBLE_STONE, "Assets/Textures/cobblestone.png", cmdpool);
-	LoadTextureAtSlot(textures, TEXTURE_STONE_BRICKS, "Assets/Textures/stone_bricks.png", cmdpool);
-}
-
 void NKMain() {
 	Window window = {};
 	window.title = "nmc";
@@ -54,12 +42,8 @@ void NKMain() {
 
 	Player player = CreatePlayer();
 	ResizePlayerCamera(&player.camera, float(swapchain.width), float(swapchain.height));
-
 	UploadTransformations(&player, init_cmdbuf);
 	EndTempCommandBuffer(cmdpool, init_cmdbuf);
-
-	TextureArray textures = CreateTextureArray(TEXTURE_COUNT);
-	LoadTextures(&textures, cmdpool);
 
 	VkPhysicalDeviceProperties pdev_props;
 	vkGetPhysicalDeviceProperties(GetPhysicalDevice(), &pdev_props);
@@ -135,7 +119,7 @@ void NKMain() {
 		vkCmdBeginQuery(cmdbuf, pipeline_queries, 0, 0);
 
 		RenderShadow(cmdbuf, instance_counts);
-		Render(&textures, &swapchain, color_target.view, depth_target.view, cmdbuf, instance_counts);
+		Render(&swapchain, color_target.view, depth_target.view, cmdbuf, instance_counts);
 
 		vkCmdEndQuery(cmdbuf, pipeline_queries, 0);
 
@@ -171,7 +155,6 @@ void NKMain() {
 
 	DestroyQueryPool(pipeline_queries);
 
-	DestroyTextureArray(&textures);
 	DestroyRenderer();
 
 	DestroyImage(depth_target);

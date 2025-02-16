@@ -13,6 +13,18 @@ global u32 block_textures_map[BLOCK_COUNT][6] = {
 
 global Renderer renderer;
 
+internal void LoadTextures(TextureArray *textures, VkCommandPool cmdpool) {
+	LoadTextureAtSlot(textures, TEXTURE_WATER, "Assets/Textures/water.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_DIRT, "Assets/Textures/dirt.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_GRASS_SIDE, "Assets/Textures/grass_side.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_GRASS_TOP, "Assets/Textures/grass_top.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_OAK_LOG_SIDE, "Assets/Textures/log_oak.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_OAK_LOG_TOP, "Assets/Textures/log_oak_top.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_STONE, "Assets/Textures/stone.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_COBBLE_STONE, "Assets/Textures/cobblestone.png", cmdpool);
+	LoadTextureAtSlot(textures, TEXTURE_STONE_BRICKS, "Assets/Textures/stone_bricks.png", cmdpool);
+}
+
 void CreateSolidRenderPass(VkFormat color_format, VkFormat depth_format, VkCommandPool cmdpool, RenderPass *pass) {
 	VkDescriptorSetLayoutBinding bindings[] = {
 		{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0 },
@@ -27,8 +39,6 @@ void CreateSolidRenderPass(VkFormat color_format, VkFormat depth_format, VkComma
 	};
 
 	GraphicsPipelineOptions options = {};
-	options.bindings = bindings;
-	options.bindings_count = ArrayCount(bindings);
 	options.color_formats = &color_format;
 	options.color_formats_count = 1;
 	options.depth_format = depth_format;
@@ -37,10 +47,13 @@ void CreateSolidRenderPass(VkFormat color_format, VkFormat depth_format, VkComma
 	options.front_face = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	options.depth_read = VK_TRUE;
 	options.depth_write = VK_TRUE;
+	options.blend = VK_FALSE;
 	options.shaders = shaders;
 	options.shaders_count = ArrayCount(shaders);
 
-	pass->pipeline = CreateGraphicsPipeline(&options);
+	VkDescriptorSetLayout layout = CreateDescriptorSetLayout(bindings, ArrayCount(bindings));
+	pass->pipeline = CreateGraphicsPipeline(&options, layout);
+	pass->desc_set = CreateDescriptorSet(bindings, ArrayCount(bindings), layout);
 
 	VkDrawIndirectCommand indirect_cmd = {6, 0, 0, 0};
 	pass->instance_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizeof(InstanceData) * MAX_INSTANCE_COUNT, 0);
@@ -64,8 +77,6 @@ void CreateWaterRenderPass(VkFormat color_format, VkFormat depth_format, VkComma
 	};
 
 	GraphicsPipelineOptions options = {};
-	options.bindings = bindings;
-	options.bindings_count = ArrayCount(bindings);
 	options.color_formats = &color_format;
 	options.color_formats_count = 1;
 	options.depth_format = depth_format;
@@ -74,11 +85,14 @@ void CreateWaterRenderPass(VkFormat color_format, VkFormat depth_format, VkComma
 	options.front_face = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	options.depth_read = VK_TRUE;
 	options.depth_write = VK_FALSE;
+	options.blend = VK_TRUE;
 	options.shaders = shaders;
 	options.shaders_count = ArrayCount(shaders);
 
 	VkDrawIndirectCommand indirect_cmd = {6, 0, 0, 0};
-	pass->pipeline = CreateGraphicsPipeline(&options);
+	VkDescriptorSetLayout layout = CreateDescriptorSetLayout(bindings, ArrayCount(bindings));
+	pass->pipeline = CreateGraphicsPipeline(&options, layout);
+	pass->desc_set = CreateDescriptorSet(bindings, ArrayCount(bindings), layout);
 	pass->instance_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizeof(InstanceData) * MAX_INSTANCE_COUNT, 0);
 	pass->instance_staging_buffer = CreateStagingBuffer(sizeof(InstanceData) * MAX_INSTANCE_COUNT, 0);
 	pass->culled_instance_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizeof(InstanceData) * MAX_INSTANCE_COUNT, 0);
@@ -88,6 +102,7 @@ void CreateWaterRenderPass(VkFormat color_format, VkFormat depth_format, VkComma
 
 void DestroyRenderPass(RenderPass *pass) {
 	DestroyPipeline(pass->pipeline);
+	DestroyDescriptorSet(&pass->desc_set);
 	DestroyBuffer(pass->instance_buffer);
 	DestroyStagingBuffer(pass->instance_staging_buffer);
 	DestroyBuffer(pass->culled_instance_buffer);
@@ -106,8 +121,6 @@ void CreateShadowRenderPass(VkCommandBuffer cmdbuf, VkCommandPool cmdpool, Shado
 	};
 
 	GraphicsPipelineOptions options = {};
-	options.bindings = bindings;
-	options.bindings_count = ArrayCount(bindings);
 	options.color_formats = 0;
 	options.color_formats_count = 0;
 	options.depth_format = VK_FORMAT_D32_SFLOAT;
@@ -116,10 +129,13 @@ void CreateShadowRenderPass(VkCommandBuffer cmdbuf, VkCommandPool cmdpool, Shado
 	options.front_face = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	options.depth_read = VK_TRUE;
 	options.depth_write = VK_TRUE;
+	options.blend = VK_FALSE;
 	options.shaders = shaders;
 	options.shaders_count = ArrayCount(shaders);
 
-	pass->pipeline = CreateGraphicsPipeline(&options);
+	VkDescriptorSetLayout layout = CreateDescriptorSetLayout(bindings, ArrayCount(bindings));
+	pass->pipeline = CreateGraphicsPipeline(&options, layout);
+	pass->desc_set = CreateDescriptorSet(bindings, ArrayCount(bindings), layout);
 
 	VkSamplerCreateInfo shadow_sampler = {};
 	shadow_sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -138,13 +154,14 @@ void CreateShadowRenderPass(VkCommandBuffer cmdbuf, VkCommandPool cmdpool, Shado
 }
 
 void DestroyShadowPass(ShadowPass *pass) {
+	DestroyDescriptorSet(&pass->desc_set);
 	DestroyPipeline(pass->pipeline);
 	DestroyTexture(pass->shadow_map);
 	DestroyBuffer(pass->light_space_buffer);
 }
 
 void CreateCullPass(VkCommandPool cmdpool, CullPass *pass) {
-	VkDescriptorSetLayoutBinding culling_bindings[] = {
+	VkDescriptorSetLayoutBinding bindings[] = {
 		{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0},
 		{1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0},
 		{2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0},
@@ -155,11 +172,17 @@ void CreateCullPass(VkCommandPool cmdpool, CullPass *pass) {
 		"Assets/Shaders/Culling.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT
 	};
 
-	pass->pipeline = CreateComputePipeline(culling_shader, culling_bindings, ArrayCount(culling_bindings));
+	VkDescriptorSetLayout layout = CreateDescriptorSetLayout(bindings, ArrayCount(bindings));
+	pass->pipeline = CreateComputePipeline(culling_shader, layout);
+	pass->desc_sets[0] = CreateDescriptorSet(bindings, ArrayCount(bindings), layout);
+	pass->desc_sets[1] = CreateDescriptorSet(bindings, ArrayCount(bindings), layout);
+
 	pass->frustum_info_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(FrustumInfo), 0);
 }
 
 void DestroyCullPass(CullPass *pass) {
+	DestroyDescriptorSet(&pass->desc_sets[0]);
+	DestroyDescriptorSet(&pass->desc_sets[1]);
 	DestroyPipeline(pass->pipeline);
 	DestroyBuffer(pass->frustum_info_buffer);
 }
@@ -174,6 +197,9 @@ void InitRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 
 	Globals globals = {};
 	renderer.globals_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(globals), &globals);
+
+	renderer.textures = CreateTextureArray(TEXTURE_COUNT);
+	LoadTextures(&renderer.textures, cmdpool);
 }
 
 void DestroyRenderer() {
@@ -182,6 +208,7 @@ void DestroyRenderer() {
 	DestroyShadowPass(&renderer.shadow_pass);
 	DestroyCullPass(&renderer.cull_pass);
 	DestroyBuffer(renderer.globals_buffer);
+	DestroyTextureArray(&renderer.textures);
 }
 
 internal void Cull(CullCall *cull, VkCommandBuffer cmdbuf) {
@@ -196,13 +223,15 @@ internal void Cull(CullCall *cull, VkCommandBuffer cmdbuf) {
 	UpdateRendererBuffer(cull->indirect_buffer, sizeof(indirect_cmd), &indirect_cmd, cmdbuf);
 
 	Pipeline *pipeline = &renderer.cull_pass.pipeline;
+	DescriptorSet *desc_set = &renderer.cull_pass.desc_sets[cull->desc_set_index];
 	BindPipeline(pipeline, cmdbuf);
+	BindDescriptorSet(desc_set, pipeline, cmdbuf);
 
 	VkDeviceSize buffer_size = cull->instance_count * sizeof(InstanceData);
-	BindBuffer(pipeline, 0, &cull->instance_buffer, buffer_size, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	BindBuffer(pipeline, 1, &cull->culled_instance_buffer, buffer_size, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	BindBuffer(pipeline, 2, &cull->indirect_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	BindBuffer(pipeline, 3, &renderer.cull_pass.frustum_info_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	BindBuffer(desc_set, 0, &cull->instance_buffer, buffer_size, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	BindBuffer(desc_set, 1, &cull->culled_instance_buffer, buffer_size, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	BindBuffer(desc_set, 2, &cull->indirect_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	BindBuffer(desc_set, 3, &renderer.cull_pass.frustum_info_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 
 	u32 group_count = (cull->instance_count + 63) / 64;
 	vkCmdDispatch(cmdbuf, group_count, 1, 1);
@@ -223,8 +252,19 @@ void Cull(Player *p, BlockInstanceCounts instance_counts, VkCommandBuffer cmdbuf
 	solid_cull_call.indirect_buffer = renderer.solid_pass.indirect_buffer;
 	solid_cull_call.proj_matrix = p->camera.proj_matrix;
 	solid_cull_call.view_matrix = p->camera.view_matrix;
+	solid_cull_call.desc_set_index = 0;
 	solid_cull_call.instance_count = instance_counts.solid;
 	Cull(&solid_cull_call, cmdbuf);
+
+	CullCall water_cull_call = {};
+	water_cull_call.instance_buffer = renderer.water_pass.instance_buffer;
+	water_cull_call.culled_instance_buffer = renderer.water_pass.culled_instance_buffer;
+	water_cull_call.indirect_buffer = renderer.water_pass.indirect_buffer;
+	water_cull_call.proj_matrix = p->camera.proj_matrix;
+	water_cull_call.view_matrix = p->camera.view_matrix;
+	water_cull_call.desc_set_index = 1;
+	water_cull_call.instance_count = instance_counts.water;
+	Cull(&water_cull_call, cmdbuf);
 }
 
 void RenderShadow(VkCommandBuffer cmdbuf, BlockInstanceCounts instance_counts) {
@@ -267,16 +307,19 @@ void RenderShadow(VkCommandBuffer cmdbuf, BlockInstanceCounts instance_counts) {
 	ShadowPass *pass = &renderer.shadow_pass;
 	RenderPass *solid_pass = &renderer.solid_pass;
 	Pipeline *pipeline = &pass->pipeline;
+	DescriptorSet *desc_set = &pass->desc_set;
 	BindPipeline(pipeline, cmdbuf);
-	BindBuffer(pipeline, 0, &pass->light_space_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-	BindBuffer(pipeline, 1, &solid_pass->culled_instance_buffer, instance_counts.solid * sizeof(InstanceData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	BindDescriptorSet(desc_set, pipeline, cmdbuf);
+
+	BindBuffer(desc_set, 0, &pass->light_space_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	BindBuffer(desc_set, 1, &solid_pass->culled_instance_buffer, instance_counts.solid * sizeof(InstanceData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
 	vkCmdDrawIndirect(cmdbuf, solid_pass->indirect_buffer.handle, 0, 1, sizeof(VkDrawIndirectCommand));
 
 	vkCmdEndRendering(cmdbuf);
 }
 
-void Render(TextureArray *textures, Swapchain *swapchain, VkImageView color_view,
+void Render(Swapchain *swapchain, VkImageView color_view,
 		VkImageView depth_view, VkCommandBuffer cmdbuf, BlockInstanceCounts instance_counts) {
 	VkClearColorValue clear_color = { 0.478f, 0.65f, 1.0f, 1.0f };
 	VkClearDepthStencilValue depth_clear = { 1.0f, 0 };
@@ -322,11 +365,14 @@ void Render(TextureArray *textures, Swapchain *swapchain, VkImageView color_view
 	if (instance_counts.solid > 0) {
 		RenderPass *pass = &renderer.solid_pass;
 		Pipeline *pipeline = &pass->pipeline;
+		DescriptorSet *desc_set = &pass->desc_set;
 		BindPipeline(pipeline, cmdbuf);
-		BindBuffer(pipeline, 0, &renderer.globals_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-		BindBuffer(pipeline, 1, &pass->culled_instance_buffer, instance_counts.solid * sizeof(InstanceData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-		BindTextureArray(pipeline, 2, textures);
-		BindTexture(pipeline, 3, renderer.shadow_pass.shadow_map);
+		BindDescriptorSet(desc_set, pipeline, cmdbuf);
+
+		BindBuffer(desc_set, 0, &renderer.globals_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+		BindBuffer(desc_set, 1, &pass->culled_instance_buffer, instance_counts.solid * sizeof(InstanceData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+		BindTextureArray(desc_set, 2, &renderer.textures);
+		BindTexture(desc_set, 3, renderer.shadow_pass.shadow_map);
 
 		vkCmdDrawIndirect(cmdbuf, pass->indirect_buffer.handle, 0, 1, sizeof(VkDrawIndirectCommand));
 	}
@@ -334,11 +380,14 @@ void Render(TextureArray *textures, Swapchain *swapchain, VkImageView color_view
 	if (instance_counts.water > 0) {
 		RenderPass *pass = &renderer.water_pass;
 		Pipeline *pipeline = &pass->pipeline;
+		DescriptorSet *desc_set = &pass->desc_set;
 		BindPipeline(pipeline, cmdbuf);
-		BindBuffer(pipeline, 0, &renderer.globals_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-		BindBuffer(pipeline, 1, &pass->culled_instance_buffer, instance_counts.water * sizeof(InstanceData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-		BindTextureArray(pipeline, 2, textures);
-		BindTexture(pipeline, 3, renderer.shadow_pass.shadow_map);
+		BindDescriptorSet(desc_set, pipeline, cmdbuf);
+
+		BindBuffer(desc_set, 0, &renderer.globals_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+		BindBuffer(desc_set, 1, &pass->culled_instance_buffer, instance_counts.water * sizeof(InstanceData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+		BindTextureArray(desc_set, 2, &renderer.textures);
+		BindTexture(desc_set, 3, renderer.shadow_pass.shadow_map);
 
 		vkCmdDrawIndirect(cmdbuf, pass->indirect_buffer.handle, 0, 1, sizeof(VkDrawIndirectCommand));
 	}

@@ -61,8 +61,6 @@ struct Shader {
 };
 
 struct GraphicsPipelineOptions {
-    VkDescriptorSetLayoutBinding *bindings;
-    u32 bindings_count;
     VkFormat *color_formats;
     u32 color_formats_count;
     VkFormat depth_format;
@@ -71,16 +69,20 @@ struct GraphicsPipelineOptions {
     VkFrontFace front_face;
     VkBool32 depth_read;
     VkBool32 depth_write;
+    VkBool32 blend;
     Shader *shaders;
     u32 shaders_count;
+};
+
+struct DescriptorSet {
+    VkDescriptorSet handle;
+    VkDescriptorSetLayout layout;
+    VkDescriptorPool pool;
 };
 
 struct Pipeline {
     VkPipeline handle;
     VkPipelineLayout layout;
-    VkDescriptorSet desc_set;
-    VkDescriptorSetLayout desc_layout;
-    VkDescriptorPool desc_pool;
     VkPipelineBindPoint bind_point;
 };
 
@@ -141,14 +143,20 @@ VkBufferMemoryBarrier2 CreateBufferBarrier(VkBuffer buffer, VkDeviceSize size, V
     VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access);
 void PipelineBufferBarriers(VkCommandBuffer cmdbuf, VkDependencyFlags flags, VkBufferMemoryBarrier2 *barriers, u32 barriers_count);
 
-Pipeline CreateGraphicsPipeline(GraphicsPipelineOptions *options);
-Pipeline CreateComputePipeline(Shader shader, VkDescriptorSetLayoutBinding *bindings, u32 bindings_count);
+VkDescriptorSetLayout CreateDescriptorSetLayout(VkDescriptorSetLayoutBinding *bindings, u32 bindings_count);
+DescriptorSet CreateDescriptorSet(VkDescriptorSetLayoutBinding *bindings, u32 bindings_count);
+DescriptorSet CreateDescriptorSet(VkDescriptorSetLayoutBinding *bindings, u32 bindings_count, VkDescriptorSetLayout layout);
+void DestroyDescriptorSet(DescriptorSet *desc_set);
+void BindDescriptorSet(DescriptorSet *desc_set, Pipeline *p, VkCommandBuffer cmdbuf);
+void BindBuffer(DescriptorSet *desc_set, u32 binding, Buffer *buffer, VkDeviceSize size, VkDescriptorType type);
+void BindTexture(DescriptorSet *desc_set, u32 binding, Texture texture);
+void BindTextureArray(DescriptorSet *desc_set, u32 binding, TextureArray *textures);
+
+Pipeline CreateGraphicsPipeline(GraphicsPipelineOptions *options, VkDescriptorSetLayout desc_layout);
+Pipeline CreateComputePipeline(Shader shader, VkDescriptorSetLayout desc_layout);
 void DestroyPipeline(Pipeline pipeline);
 
 void BindPipeline(Pipeline *p, VkCommandBuffer cmdbuf);
-void BindBuffer(Pipeline *p, u32 binding, Buffer *buffer, VkDeviceSize size, VkDescriptorType type);
-void BindTexture(Pipeline *p, u32 binding, Texture texture);
-void BindTextureArray(Pipeline *p, u32 binding, TextureArray *textures);
 
 void CopyBuffer(VkBuffer dst, VkBuffer src, VkDeviceSize size, VkCommandPool cmdpool);
 Buffer CreateBuffer(VkCommandPool cmdpool, VkBufferUsageFlags usage, VkDeviceSize size, void *data);

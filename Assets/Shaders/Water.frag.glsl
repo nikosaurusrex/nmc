@@ -93,5 +93,5 @@ void main() {
 
     vec3 lighting = (ambient + (1.0 - shadow) * shade) * tex;
 
-    color = vec4(lighting, 1.0);
+    color = vec4(lighting, 0.5);
 }
