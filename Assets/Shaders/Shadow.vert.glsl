@@ -1,5 +1,9 @@
 #version 450
 
+#extension GL_GOOGLE_include_directive: require
+
+#include "Common.h"
+
 struct InstanceData {
     float px, py, pz;
     uint side;
@@ -88,4 +92,5 @@ void main() {
     vec4 pos = vec4(vert_pos + instance_pos, 1.0);
 
     gl_Position = light_space_matrix * pos;
+    gl_Position.xy = DistortShadow(gl_Position.xy);
 }

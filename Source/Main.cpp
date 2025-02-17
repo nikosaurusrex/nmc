@@ -30,19 +30,26 @@ void NKMain() {
 	CreateSwapchain(&swapchain, cmdpool);
 	VkCommandBuffer cmdbuf;
 	AllocateCommandBuffers(cmdpool, &cmdbuf, 1);
-	Image color_target = CreateImage(swapchain.width, swapchain.height, swapchain.format.format, 1,
+	Image swapchain_target = CreateImage(swapchain.width, swapchain.height, swapchain.format.format, 1,
 		VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+	Texture render_target = CreateTexture(swapchain.width, swapchain.height, VK_FORMAT_R16G16B16A16_SFLOAT, 
+		VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
 	Image depth_target = CreateImage(swapchain.width, swapchain.height, VK_FORMAT_D32_SFLOAT, 1,
 		VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
 
 	VkQueryPool pipeline_queries = CreateQueryPool(1, VK_QUERY_TYPE_PIPELINE_STATISTICS);
 
 	VkCommandBuffer init_cmdbuf = BeginTempCommandBuffer(cmdpool);
-	InitRenderer(cmdpool, init_cmdbuf, color_target.format, depth_target.format);
+	InitRenderer(cmdpool, init_cmdbuf, render_target.image.format, depth_target.format);
 
 	Player player = CreatePlayer();
 	ResizePlayerCamera(&player.camera, float(swapchain.width), float(swapchain.height));
 	UploadTransformations(&player, init_cmdbuf);
+
+	VkImageMemoryBarrier2 render_target_barrier_initial = CreateImageBarrier(render_target.image.handle, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
+		VK_ACCESS_2_NONE, VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
+		VK_ACCESS_2_NONE, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+	PipelineImageBarriers(init_cmdbuf, 0, &render_target_barrier_initial, 1);
 	EndTempCommandBuffer(cmdpool, init_cmdbuf);
 
 	VkPhysicalDeviceProperties pdev_props;
@@ -92,19 +99,23 @@ void NKMain() {
 		if (window.resized) {
 			UpdateSwapchain(&swapchain, cmdpool, 1);
 
-			DestroyImage(color_target);
+			DestroyImage(swapchain_target);
+			DestroyTexture(render_target);
 			DestroyImage(depth_target);
-			color_target = CreateImage(swapchain.width, swapchain.height, swapchain.format.format, 1,
+			swapchain_target = CreateImage(swapchain.width, swapchain.height, swapchain.format.format, 1,
+				VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+			render_target = CreateTexture(swapchain.width, swapchain.height, VK_FORMAT_R16G16B16A16_SFLOAT,
 				VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
 			depth_target = CreateImage(swapchain.width, swapchain.height, VK_FORMAT_D32_SFLOAT, 1,
 				VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
 
 			VkCommandBuffer temp_cmdbuf = BeginTempCommandBuffer(cmdpool);
 			ResizePlayerCamera(&player.camera, float(swapchain.width), float(swapchain.height));
+
 			EndTempCommandBuffer(cmdpool, temp_cmdbuf);
 		}
 
-		if (!AcquireSwapchain(&swapchain, cmdpool, cmdbuf, color_target, depth_target)) {
+		if (!AcquireSwapchain(&swapchain, cmdpool, cmdbuf, swapchain_target, depth_target)) {
 			continue;
 		}
 
@@ -118,12 +129,24 @@ void NKMain() {
 		vkCmdResetQueryPool(cmdbuf, pipeline_queries, 0, 1);
 		vkCmdBeginQuery(cmdbuf, pipeline_queries, 0, 0);
 
+		VkImageMemoryBarrier2 render_target_barrier_before = CreateImageBarrier(render_target.image.handle, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+		PipelineImageBarriers(cmdbuf, 0, &render_target_barrier_before, 1);
+
 		RenderShadow(cmdbuf, instance_counts);
-		Render(&swapchain, color_target.view, depth_target.view, cmdbuf, instance_counts);
+		Render(&swapchain, render_target.image.view, depth_target.view, cmdbuf, instance_counts);
+
+		VkImageMemoryBarrier2 render_target_barrier_after = CreateImageBarrier(render_target.image.handle, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+		PipelineImageBarriers(cmdbuf, 0, &render_target_barrier_after, 1);
+
+		DoPostprocessing(&swapchain, render_target, swapchain_target, cmdbuf);
 
 		vkCmdEndQuery(cmdbuf, pipeline_queries, 0);
 
-		PresentSwapchain(&swapchain, cmdbuf, color_target);
+		PresentSwapchain(&swapchain, cmdbuf, swapchain_target);
 
 		uint64_t gpu_timestamps[2] = {};
 		VK_CHECK(vkGetQueryPoolResults(GetLogicalDevice(), swapchain.query_pool, 0, 2, sizeof(gpu_timestamps),
@@ -158,7 +181,8 @@ void NKMain() {
 	DestroyRenderer();
 
 	DestroyImage(depth_target);
-	DestroyImage(color_target);
+	DestroyImage(swapchain_target);
+	DestroyTexture(render_target);
 	FreeCommandBuffers(cmdpool, &cmdbuf, 1);
 	DestroySwapchain(&swapchain);
 	DestroyCommandPool(cmdpool);

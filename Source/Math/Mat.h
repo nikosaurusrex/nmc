@@ -36,6 +36,7 @@ mat4 Scale(mat4 m, vec3 v);
 mat4 Translate(mat4 m, vec3 v);
 mat4 Rotate(mat4 m, float angle, vec3 v);
 mat4 Transpose(mat4 m);
+mat4 Inverse(mat4 m);
 
 void ExtractFrustumPlanes(mat4 proj, vec4 dest[6]);
 

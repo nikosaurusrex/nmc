@@ -21,6 +21,12 @@ struct FrustumInfo {
 	u32 instance_count;
 };
 
+struct SkyUniform {
+	mat4 inv_proj;
+	mat4 inv_view;
+	vec3 camera_pos;
+};
+
 struct RenderPass {
 	DescriptorSet desc_set;
 	Pipeline pipeline;
@@ -54,14 +60,23 @@ struct CullCall {
 	u32 instance_count;
 };
 
+struct Postprocess {
+	DescriptorSet desc_set;
+	Pipeline pipeline;
+};
+
 struct Renderer {
+	RenderPass sky_pass;
 	RenderPass solid_pass;
 	RenderPass water_pass;
 	ShadowPass shadow_pass;
 	CullPass cull_pass;
+	Postprocess post_process;
 
 	TextureArray textures;
+	Texture noise_texture;
 	Buffer globals_buffer;
+	Buffer sky_buffer;
 };
 
 struct BlockInstanceCounts {
@@ -84,6 +99,7 @@ void Cull(Player *p, BlockInstanceCounts instance_counts, VkCommandBuffer cmdbuf
 void RenderShadow(VkCommandBuffer cmdbuf, BlockInstanceCounts instance_counts);
 void Render(Swapchain *swapchain, VkImageView color_view,
 	VkImageView depth_view, VkCommandBuffer cmdbuf, BlockInstanceCounts instance_counts);
+void DoPostprocessing(Swapchain *swapchain, Texture render_target, Image swapchain_target, VkCommandBuffer cmdbuf);
 void UploadTransformations(Player *p, VkCommandBuffer cmdbuf);
 
 BlockInstanceCounts UpdateBlockInstances(VkCommandBuffer cmdbuf, BlockInstanceCounts prev_instance_counts);

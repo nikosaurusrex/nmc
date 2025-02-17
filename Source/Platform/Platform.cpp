@@ -79,7 +79,8 @@ void *memcpy(void *_dst, void const *_src, size_t size) {
     u8 *dst = (u8 *)_dst;
     u8 *src = (u8 *)_src;
     for (u64 i = 0; i < size; i++) {
-        dst[i] = src[i];
+        u8 b = src[i];
+        dst[i] = b;
     }
     return dst;
 }

@@ -79,9 +79,9 @@ const uint indices[] = {
 
 layout(location=0) out vec3 p_world_pos;
 layout(location=1) out vec3 p_normal;
+
 layout(location=2) out vec2 p_uv;
 layout(location=3) out vec4 p_shadow_pos;
-layout(location=4) flat out uint p_texture;
 
 void main() {
     uint vertexID = gl_VertexIndex;
@@ -103,5 +103,4 @@ void main() {
     p_normal = normal;
     p_uv = uv;
     p_shadow_pos = light_space_matrix * pos;
-    p_texture = instance.texture;
 }

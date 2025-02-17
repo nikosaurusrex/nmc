@@ -1,8 +1,8 @@
 #include "Renderer.h"
 
 global u32 block_textures_map[BLOCK_COUNT][6] = {
-	{},
-	{TEXTURE_WATER, TEXTURE_WATER, TEXTURE_WATER, TEXTURE_WATER, TEXTURE_WATER, TEXTURE_WATER},
+	{0, 0, 0, 0, 0, 0},
+	{0, 0, 0, 0, 0, 0},
 	{TEXTURE_DIRT, TEXTURE_DIRT, TEXTURE_DIRT, TEXTURE_DIRT, TEXTURE_DIRT, TEXTURE_DIRT},
 	{TEXTURE_GRASS_TOP, TEXTURE_DIRT, TEXTURE_GRASS_SIDE, TEXTURE_GRASS_SIDE, TEXTURE_GRASS_SIDE, TEXTURE_GRASS_SIDE},
 	{TEXTURE_OAK_LOG_TOP, TEXTURE_OAK_LOG_TOP, TEXTURE_OAK_LOG_SIDE, TEXTURE_OAK_LOG_SIDE, TEXTURE_OAK_LOG_SIDE, TEXTURE_OAK_LOG_SIDE},
@@ -14,7 +14,6 @@ global u32 block_textures_map[BLOCK_COUNT][6] = {
 global Renderer renderer;
 
 internal void LoadTextures(TextureArray *textures, VkCommandPool cmdpool) {
-	LoadTextureAtSlot(textures, TEXTURE_WATER, "Assets/Textures/water.png", cmdpool);
 	LoadTextureAtSlot(textures, TEXTURE_DIRT, "Assets/Textures/dirt.png", cmdpool);
 	LoadTextureAtSlot(textures, TEXTURE_GRASS_SIDE, "Assets/Textures/grass_side.png", cmdpool);
 	LoadTextureAtSlot(textures, TEXTURE_GRASS_TOP, "Assets/Textures/grass_top.png", cmdpool);
@@ -25,12 +24,46 @@ internal void LoadTextures(TextureArray *textures, VkCommandPool cmdpool) {
 	LoadTextureAtSlot(textures, TEXTURE_STONE_BRICKS, "Assets/Textures/stone_bricks.png", cmdpool);
 }
 
+void CreateSkyRenderPass(VkFormat color_format, VkFormat depth_format, VkCommandPool cmdpool, RenderPass *pass) {
+	VkDescriptorSetLayoutBinding bindings[] = {
+		{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0 },
+	};
+
+	Shader shaders[] = {
+		{"Assets/Shaders/Sky.vert.spv", VK_SHADER_STAGE_VERTEX_BIT},
+		{"Assets/Shaders/Sky.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT},
+	};
+
+	GraphicsPipelineOptions options = {};
+	options.color_formats = &color_format;
+	options.color_formats_count = 1;
+	options.depth_format = depth_format;
+	options.polygon_mode = VK_POLYGON_MODE_FILL;
+	options.cull_mode = VK_CULL_MODE_NONE;
+	options.front_face = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+	options.depth_read = VK_FALSE;
+	options.depth_write = VK_FALSE;
+	options.blend = VK_FALSE;
+	options.shaders = shaders;
+	options.shaders_count = ArrayCount(shaders);
+
+	VkDescriptorSetLayout layout = CreateDescriptorSetLayout(bindings, ArrayCount(bindings));
+	pass->pipeline = CreateGraphicsPipeline(&options, layout);
+	pass->desc_set = CreateDescriptorSet(bindings, ArrayCount(bindings), layout);
+}
+
+void DestroySkyRenderPass(RenderPass *pass) {
+	DestroyPipeline(pass->pipeline);
+	DestroyDescriptorSet(&pass->desc_set);
+}
+
 void CreateSolidRenderPass(VkFormat color_format, VkFormat depth_format, VkCommandPool cmdpool, RenderPass *pass) {
 	VkDescriptorSetLayoutBinding bindings[] = {
 		{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0 },
 		{1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
 		{2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, 0},
-		{3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0}
+		{3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0},
+		{4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0}
 	};
 
 	Shader shaders[] = {
@@ -67,8 +100,9 @@ void CreateWaterRenderPass(VkFormat color_format, VkFormat depth_format, VkComma
 	VkDescriptorSetLayoutBinding bindings[] = {
 		{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0 },
 		{1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
-		{2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, 0},
-		{3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0}
+		{2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0},
+		{3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0},
+		{4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0}
 	};
 
 	Shader shaders[] = {
@@ -187,28 +221,73 @@ void DestroyCullPass(CullPass *pass) {
 	DestroyBuffer(pass->frustum_info_buffer);
 }
 
+void CreatePostprocess(VkCommandPool cmdpool, Postprocess *post) {
+	VkDescriptorSetLayoutBinding bindings[] = {
+		{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0}
+	};
+
+	Shader shaders[] = {
+		{"Assets/Shaders/Post.vert.spv", VK_SHADER_STAGE_VERTEX_BIT},
+		{"Assets/Shaders/Post.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT},
+	};
+
+	VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
+
+	GraphicsPipelineOptions options = {};
+	options.color_formats = &format;
+	options.color_formats_count = 1;
+	options.depth_format = VK_FORMAT_UNDEFINED;
+	options.polygon_mode = VK_POLYGON_MODE_FILL;
+	options.cull_mode = VK_CULL_MODE_NONE;
+	options.front_face = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+	options.depth_read = VK_FALSE;
+	options.depth_write = VK_FALSE;
+	options.blend = VK_FALSE;
+	options.shaders = shaders;
+	options.shaders_count = ArrayCount(shaders);
+
+	VkDescriptorSetLayout layout = CreateDescriptorSetLayout(bindings, ArrayCount(bindings));
+	post->desc_set = CreateDescriptorSet(bindings, ArrayCount(bindings), layout);
+	post->pipeline = CreateGraphicsPipeline(&options, layout);
+}
+
+void DestroyPostprocess(Postprocess *post) {
+	DestroyPipeline(post->pipeline);
+	DestroyDescriptorSet(&post->desc_set);
+}
+
 void InitRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 	VkFormat color_format, VkFormat depth_format) {
 
+	CreateSkyRenderPass(color_format, depth_format, cmdpool, &renderer.sky_pass);
 	CreateSolidRenderPass(color_format, depth_format, cmdpool, &renderer.solid_pass);
 	CreateWaterRenderPass(color_format, depth_format, cmdpool, &renderer.water_pass);
 	CreateShadowRenderPass(cmdbuf, cmdpool, &renderer.shadow_pass);
 	CreateCullPass(cmdpool, &renderer.cull_pass);
+	CreatePostprocess(cmdpool, &renderer.post_process);
 
 	Globals globals = {};
 	renderer.globals_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(globals), &globals);
 
+	SkyUniform sky_uniform = {};
+	renderer.sky_buffer = CreateBuffer(cmdpool, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(sky_uniform), &sky_uniform);
+
 	renderer.textures = CreateTextureArray(TEXTURE_COUNT);
 	LoadTextures(&renderer.textures, cmdpool);
+
+	renderer.noise_texture = LoadTextureFromFile("Assets/Textures/noise.png", cmdpool);
 }
 
 void DestroyRenderer() {
+	DestroyRenderPass(&renderer.sky_pass);
 	DestroyRenderPass(&renderer.solid_pass);
 	DestroyRenderPass(&renderer.water_pass);
 	DestroyShadowPass(&renderer.shadow_pass);
 	DestroyCullPass(&renderer.cull_pass);
 	DestroyBuffer(renderer.globals_buffer);
+	DestroyBuffer(renderer.sky_buffer);
 	DestroyTextureArray(&renderer.textures);
+	DestroyTexture(renderer.noise_texture);
 }
 
 internal void Cull(CullCall *cull, VkCommandBuffer cmdbuf) {
@@ -321,7 +400,7 @@ void RenderShadow(VkCommandBuffer cmdbuf, BlockInstanceCounts instance_counts) {
 
 void Render(Swapchain *swapchain, VkImageView color_view,
 		VkImageView depth_view, VkCommandBuffer cmdbuf, BlockInstanceCounts instance_counts) {
-	VkClearColorValue clear_color = { 0.478f, 0.65f, 1.0f, 1.0f };
+	VkClearColorValue clear_color = {};
 	VkClearDepthStencilValue depth_clear = { 1.0f, 0 };
 
 	VkRenderingAttachmentInfo color_attachment = {};
@@ -362,6 +441,19 @@ void Render(Swapchain *swapchain, VkImageView color_view,
 	vkCmdSetViewport(cmdbuf, 0, 1, &viewport);
 	vkCmdSetScissor(cmdbuf, 0, 1, &scissor);
 
+	// sky
+	{
+		RenderPass *pass = &renderer.sky_pass;
+		Pipeline *pipeline = &pass->pipeline;
+		DescriptorSet *desc_set = &pass->desc_set;
+		BindPipeline(pipeline, cmdbuf);
+		BindDescriptorSet(desc_set, pipeline, cmdbuf);
+
+		BindBuffer(desc_set, 0, &renderer.sky_buffer, sizeof(SkyUniform), VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+
+		vkCmdDraw(cmdbuf, 6, 1, 0, 0);
+	}
+
 	if (instance_counts.solid > 0) {
 		RenderPass *pass = &renderer.solid_pass;
 		Pipeline *pipeline = &pass->pipeline;
@@ -373,6 +465,7 @@ void Render(Swapchain *swapchain, VkImageView color_view,
 		BindBuffer(desc_set, 1, &pass->culled_instance_buffer, instance_counts.solid * sizeof(InstanceData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 		BindTextureArray(desc_set, 2, &renderer.textures);
 		BindTexture(desc_set, 3, renderer.shadow_pass.shadow_map);
+		BindTexture(desc_set, 4, renderer.noise_texture);
 
 		vkCmdDrawIndirect(cmdbuf, pass->indirect_buffer.handle, 0, 1, sizeof(VkDrawIndirectCommand));
 	}
@@ -386,8 +479,9 @@ void Render(Swapchain *swapchain, VkImageView color_view,
 
 		BindBuffer(desc_set, 0, &renderer.globals_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 		BindBuffer(desc_set, 1, &pass->culled_instance_buffer, instance_counts.water * sizeof(InstanceData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-		BindTextureArray(desc_set, 2, &renderer.textures);
+		BindTexture(desc_set, 2, renderer.noise_texture);
 		BindTexture(desc_set, 3, renderer.shadow_pass.shadow_map);
+		BindTexture(desc_set, 4, renderer.noise_texture);
 
 		vkCmdDrawIndirect(cmdbuf, pass->indirect_buffer.handle, 0, 1, sizeof(VkDrawIndirectCommand));
 	}
@@ -395,13 +489,56 @@ void Render(Swapchain *swapchain, VkImageView color_view,
 	vkCmdEndRendering(cmdbuf);
 }
 
+void DoPostprocessing(Swapchain *swapchain, Texture render_target, Image swapchain_target, VkCommandBuffer cmdbuf) {
+	Postprocess *post = &renderer.post_process;
+	BindPipeline(&post->pipeline, cmdbuf);
+	BindDescriptorSet(&post->desc_set, &post->pipeline, cmdbuf);
+
+	VkClearColorValue clear_color = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+	VkRenderingAttachmentInfo color_attachment = {};
+	color_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+	color_attachment.imageView = swapchain_target.view;
+	color_attachment.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+	color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+	color_attachment.clearValue.color = clear_color;
+
+	VkRenderingInfo rendering_info = {};
+	rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+	rendering_info.renderArea.extent.width = swapchain->width;
+	rendering_info.renderArea.extent.height = swapchain->height;
+	rendering_info.layerCount = 1;
+	rendering_info.colorAttachmentCount = 1;
+	rendering_info.pColorAttachments = &color_attachment;
+	rendering_info.pDepthAttachment = 0;
+	vkCmdBeginRendering(cmdbuf, &rendering_info);
+
+	VkViewport viewport = {};
+	viewport.width = float(swapchain->width);
+	viewport.height = float(swapchain->height);
+	viewport.maxDepth = 1;
+
+	VkRect2D scissor = {};
+	scissor.extent.width = swapchain->width;
+	scissor.extent.height = swapchain->height;
+
+	vkCmdSetViewport(cmdbuf, 0, 1, &viewport);
+	vkCmdSetScissor(cmdbuf, 0, 1, &scissor);
+
+	BindTexture(&post->desc_set, 0, render_target);
+	vkCmdDraw(cmdbuf, 6, 1, 0, 0);
+
+	vkCmdEndRendering(cmdbuf);
+}
+
 internal mat4 UploadLightSpaceTransform(Player *p, VkCommandBuffer cmdbuf) {
 	const float shadow_dist = 50.0f;
-	const float shadow_range = 50.0f;
+	const float shadow_range = 120.0f;
 
 	vec3 player_eye = GetEyePos(p);
 
-	vec3 light_dir = Normalize(vec3(1.0f, -1.0f, 1.0f));
+	vec3 light_dir = Normalize(vec3(0.5f, -1.0f, 0.5f));
 	vec3 light_pos = player_eye - light_dir * shadow_dist;
 	mat4 light_view = LookAt(light_pos, player_eye, vec3(0, 1, 0));
 	mat4 light_proj = Ortho(-shadow_range, shadow_range, -shadow_range, shadow_range, 0.1f, 1000.0f);
@@ -421,6 +558,9 @@ internal void UploadPlayerCameraMatrices(Player *p, mat4 light_space_matrix, VkC
 
 	Globals globals = { c->proj_matrix, view_matrix, light_space_matrix, pos };
     UpdateRendererBuffer(renderer.globals_buffer, sizeof(globals), &globals, cmdbuf);
+
+	SkyUniform sky_uniform = { Inverse(c->proj_matrix), Inverse(view_matrix), pos };
+    UpdateRendererBuffer(renderer.sky_buffer, sizeof(sky_uniform), &sky_uniform, cmdbuf);
 }
 
 void UploadTransformations(Player *p, VkCommandBuffer cmdbuf) {

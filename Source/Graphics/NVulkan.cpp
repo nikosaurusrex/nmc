@@ -344,7 +344,7 @@ void CreateSwapchain(Swapchain *swapchain, VkCommandPool cmdpool) {
 
     for (u32 i = 0; i < formats_count; ++i) {
         VkSurfaceFormatKHR format = formats[i];
-        if (format.format == VK_FORMAT_B8G8R8A8_SRGB) {
+        if (format.format == VK_FORMAT_R8G8B8A8_SRGB) {
             sc->format = format;
             break;
         }
@@ -733,11 +733,11 @@ Texture LoadTextureFromFile(const char *path, VkCommandPool cmdpool) {
 			rgba_pixels[rgba_idx + 3] = 255;
 		}
 
-		result = CreateTextureFromPixels(w, h, 4, VK_FORMAT_R8G8B8A8_SRGB, rgba_pixels, sampler_info, cmdpool);
+		result = CreateTextureFromPixels(w, h, 4, VK_FORMAT_R8G8B8A8_UNORM, rgba_pixels, sampler_info, cmdpool);
 
 		HeapFree(rgba_pixels);
 	} else {
-		result = CreateTextureFromPixels(w, h, channels, VK_FORMAT_R8G8B8A8_SRGB, pixels, sampler_info, cmdpool);
+		result = CreateTextureFromPixels(w, h, channels, VK_FORMAT_R8G8B8A8_UNORM, pixels, sampler_info, cmdpool);
 	}
 	
 	free(pixels);

@@ -11,6 +11,7 @@ include_directories(${Vulkan_INCLUDE_DIRS})
 
 file(GLOB_RECURSE SOURCES "Source/*.cpp" "Source/*.h")
 file(GLOB_RECURSE SHADER_SOURCES "Assets/Shaders/*.glsl")
+file(GLOB_RECURSE SHADER_HEADERS "Assets/Shaders/*.h")
 
 add_executable(nmc ${SOURCES})
 
@@ -33,7 +34,7 @@ foreach(SHADER_SOURCE ${SHADER_SOURCES})
     add_custom_command(
         OUTPUT ${SHADER_SPV}
         COMMAND glslangValidator --target-env vulkan1.3 ${SHADER_SOURCE} -o ${SHADER_SPV}
-        DEPENDS ${SHADER_SOURCE}
+        DEPENDS ${SHADER_SOURCE} ${SHADER_HEADERS}
         COMMENT "Compiling shader ${SHADER_SOURCE}"
     )
     list(APPEND SPIRV_FILES ${SHADER_SPV})

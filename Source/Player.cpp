@@ -9,13 +9,13 @@ global const float eye_height = 1.6f;
 Player CreatePlayer() {
 	Player result = {};
 
-	result.position = vec3(10.0, 14.0f, 10.0f);
+	result.position = vec3(20.0, 30.0f, 20.0f);
 	result.velocity = vec3(0);
 	result.acceleration = vec3(0);
 	result.yaw = 0.0f;
 	result.pitch = 0;
 	result.on_ground = 1;
-	result.flying = 0;
+	result.flying = 1;
 
 	return result;
 }
