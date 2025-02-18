@@ -72,6 +72,8 @@ struct GraphicsPipelineOptions {
     VkBool32 blend;
     Shader *shaders;
     u32 shaders_count;
+    VkPushConstantRange *push_contants;
+    u32 push_constants_count;
 };
 
 struct DescriptorSet {

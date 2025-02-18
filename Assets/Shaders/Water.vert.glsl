@@ -17,6 +17,10 @@ layout(set=0, binding=1) readonly buffer InstanceBuffer {
     InstanceData instances[];
 };
 
+layout(push_constant, std430) uniform time_pc {
+    float time;
+};
+
 const vec3 positions[6][4] = {
     { // top
         vec3(0.0, 1.0, 0.0),
@@ -65,6 +69,15 @@ const vec3 normals[6] = {
     vec3(0.0, 0.0, -1.0)
 };
 
+const vec3 tangents[6] = {
+    vec3(1.0, 0.0, 0.0),
+    vec3(1.0, 0.0, 0.0),
+    vec3(0.0, 0.0, 1.0),
+    vec3(0.0, 0.0, -1.0),
+    vec3(1.0, 0.0, 0.0),
+    vec3(-1.0, 0.0, 0.0)
+};
+
 const vec2 uvs[4] = {
     vec2(0.0, 0.0),
     vec2(0.0, 1.0),
@@ -79,9 +92,11 @@ const uint indices[] = {
 
 layout(location=0) out vec3 p_world_pos;
 layout(location=1) out vec3 p_normal;
+layout(location=2) out vec3 p_tangent;
+layout(location=3) out vec3 p_bitangent;
 
-layout(location=2) out vec2 p_uv;
-layout(location=3) out vec4 p_shadow_pos;
+layout(location=4) out vec2 p_uv;
+layout(location=5) out vec4 p_shadow_pos;
 
 void main() {
     uint vertexID = gl_VertexIndex;
@@ -91,6 +106,8 @@ void main() {
     uint index = indices[vertexID];
     vec3 vert_pos = positions[instance.side][index];
     vec3 normal = normals[instance.side];
+    vec3 tangent = tangents[instance.side];
+    vec3 bitangent = cross(normal, tangent);
     vec2 uv = uvs[index];
 
     vec3 instance_pos = vec3(instance.px, instance.py, instance.pz);
@@ -101,6 +118,8 @@ void main() {
 
     p_world_pos = pos.xyz;
     p_normal = normal;
+    p_tangent = tangent;
+    p_bitangent = bitangent;
     p_uv = uv;
     p_shadow_pos = light_space_matrix * pos;
 }

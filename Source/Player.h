@@ -35,5 +35,6 @@ struct RayIntersection {
 Player CreatePlayer();
 void ResizePlayerCamera(Camera *c, float w, float h);
 RayIntersection CastRay(Player *p);
-void UpdatePlayer(Player *p, float df);
+void UpdatePlayer(Player *p);
+void UpdatePlayerPhysics(Player *p, float df);
 vec3 GetEyePos(Player *p);

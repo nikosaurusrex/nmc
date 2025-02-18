@@ -102,13 +102,19 @@ void CreateWaterRenderPass(VkFormat color_format, VkFormat depth_format, VkComma
 		{1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, 0},
 		{2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0},
 		{3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0},
-		{4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0}
+		{4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0},
+		{5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0},
 	};
 
 	Shader shaders[] = {
 		{"Assets/Shaders/Water.vert.spv", VK_SHADER_STAGE_VERTEX_BIT},
 		{"Assets/Shaders/Water.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT},
 	};
+
+	VkPushConstantRange time_pc = {};
+    time_pc.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+	time_pc.offset = 0;
+    time_pc.size = sizeof(float);
 
 	GraphicsPipelineOptions options = {};
 	options.color_formats = &color_format;
@@ -122,6 +128,8 @@ void CreateWaterRenderPass(VkFormat color_format, VkFormat depth_format, VkComma
 	options.blend = VK_TRUE;
 	options.shaders = shaders;
 	options.shaders_count = ArrayCount(shaders);
+	options.push_contants = &time_pc;
+	options.push_constants_count = 1;
 
 	VkDrawIndirectCommand indirect_cmd = {6, 0, 0, 0};
 	VkDescriptorSetLayout layout = CreateDescriptorSetLayout(bindings, ArrayCount(bindings));
@@ -276,6 +284,8 @@ void InitRenderer(VkCommandPool cmdpool, VkCommandBuffer cmdbuf,
 	LoadTextures(&renderer.textures, cmdpool);
 
 	renderer.noise_texture = LoadTextureFromFile("Assets/Textures/noise.png", cmdpool);
+	renderer.water_texture1 = LoadTextureFromFile("Assets/Textures/water1.png", cmdpool);
+	renderer.water_texture2 = LoadTextureFromFile("Assets/Textures/water2.png", cmdpool);
 }
 
 void DestroyRenderer() {
@@ -288,6 +298,8 @@ void DestroyRenderer() {
 	DestroyBuffer(renderer.sky_buffer);
 	DestroyTextureArray(&renderer.textures);
 	DestroyTexture(renderer.noise_texture);
+	DestroyTexture(renderer.water_texture1);
+	DestroyTexture(renderer.water_texture2);
 }
 
 internal void Cull(CullCall *cull, VkCommandBuffer cmdbuf) {
@@ -398,8 +410,8 @@ void RenderShadow(VkCommandBuffer cmdbuf, BlockInstanceCounts instance_counts) {
 	vkCmdEndRendering(cmdbuf);
 }
 
-void Render(Swapchain *swapchain, VkImageView color_view,
-		VkImageView depth_view, VkCommandBuffer cmdbuf, BlockInstanceCounts instance_counts) {
+void Render(Swapchain *swapchain, VkImageView color_view, VkImageView depth_view, VkCommandBuffer cmdbuf,
+	BlockInstanceCounts instance_counts, float time) {
 	VkClearColorValue clear_color = {};
 	VkClearDepthStencilValue depth_clear = { 1.0f, 0 };
 
@@ -479,9 +491,12 @@ void Render(Swapchain *swapchain, VkImageView color_view,
 
 		BindBuffer(desc_set, 0, &renderer.globals_buffer, VK_WHOLE_SIZE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 		BindBuffer(desc_set, 1, &pass->culled_instance_buffer, instance_counts.water * sizeof(InstanceData), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-		BindTexture(desc_set, 2, renderer.noise_texture);
-		BindTexture(desc_set, 3, renderer.shadow_pass.shadow_map);
-		BindTexture(desc_set, 4, renderer.noise_texture);
+		BindTexture(desc_set, 2, renderer.shadow_pass.shadow_map);
+		BindTexture(desc_set, 3, renderer.noise_texture);
+		BindTexture(desc_set, 4, renderer.water_texture1);
+		BindTexture(desc_set, 5, renderer.water_texture2);
+
+		vkCmdPushConstants(cmdbuf, pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float), &time);
 
 		vkCmdDrawIndirect(cmdbuf, pass->indirect_buffer.handle, 0, 1, sizeof(VkDrawIndirectCommand));
 	}
@@ -538,7 +553,7 @@ internal mat4 UploadLightSpaceTransform(Player *p, VkCommandBuffer cmdbuf) {
 
 	vec3 player_eye = GetEyePos(p);
 
-	vec3 light_dir = Normalize(vec3(0.5f, -1.0f, 0.5f));
+	vec3 light_dir = Normalize(vec3(-1.0f, -1.0f, -1.0f));
 	vec3 light_pos = player_eye - light_dir * shadow_dist;
 	mat4 light_view = LookAt(light_pos, player_eye, vec3(0, 1, 0));
 	mat4 light_proj = Ortho(-shadow_range, shadow_range, -shadow_range, shadow_range, 0.1f, 1000.0f);

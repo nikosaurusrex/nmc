@@ -64,22 +64,20 @@ void NKMain() {
 	u64 triangles = 0.0;
 	double triangles_per_sec = 0.0;
 
-	u64 last_frame_time = GetTimeNowUs();
-
 	b32 cursor_locked = 1;
 	SetCursorToNone(&window);
 
 	BlockInstanceCounts prev_instance_counts = {};
 
+	u64 last_frame_time = GetTimeNowUs();
+	double time = 0.0;
+	const double time_step = 0.01;
+	double accumulator = 0.0;
+
 	while (window.running) {
 		u64 cpu_time_begin = GetTimeNowUs();
 
 		UpdateWindow(&window);
-
-		u64 now_time = GetTimeNowUs();
-		u64 delta = now_time - last_frame_time;
-		last_frame_time = now_time;
-		float df = float(delta) / 1000000;
 
 		if (IsKeyDown(KEY_ESCAPE)) {
 			cursor_locked ^= 1;
@@ -94,7 +92,18 @@ void NKMain() {
 			window.running = false;
 		}
 
-		UpdatePlayer(&player, df);
+		UpdatePlayer(&player);
+
+		u64 now_time = GetTimeNowUs();
+		u64 frame_time = now_time - last_frame_time;
+		last_frame_time = now_time;
+		accumulator += double(frame_time) / 1000000;
+
+		while (accumulator >= time_step) {
+			UpdatePlayerPhysics(&player, time_step);
+			accumulator -= time_step;
+			time += time_step;
+		}
 
 		if (window.resized) {
 			UpdateSwapchain(&swapchain, cmdpool, 1);
@@ -135,7 +144,7 @@ void NKMain() {
 		PipelineImageBarriers(cmdbuf, 0, &render_target_barrier_before, 1);
 
 		RenderShadow(cmdbuf, instance_counts);
-		Render(&swapchain, render_target.image.view, depth_target.view, cmdbuf, instance_counts);
+		Render(&swapchain, render_target.image.view, depth_target.view, cmdbuf, instance_counts, time);
 
 		VkImageMemoryBarrier2 render_target_barrier_after = CreateImageBarrier(render_target.image.handle, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
 			VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,

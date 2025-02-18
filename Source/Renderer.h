@@ -75,6 +75,8 @@ struct Renderer {
 
 	TextureArray textures;
 	Texture noise_texture;
+	Texture water_texture1;
+	Texture water_texture2;
 	Buffer globals_buffer;
 	Buffer sky_buffer;
 };
@@ -97,8 +99,8 @@ void DestroyRenderer();
 
 void Cull(Player *p, BlockInstanceCounts instance_counts, VkCommandBuffer cmdbuf);
 void RenderShadow(VkCommandBuffer cmdbuf, BlockInstanceCounts instance_counts);
-void Render(Swapchain *swapchain, VkImageView color_view,
-	VkImageView depth_view, VkCommandBuffer cmdbuf, BlockInstanceCounts instance_counts);
+void Render(Swapchain *swapchain, VkImageView color_view, VkImageView depth_view, VkCommandBuffer cmdbuf,
+	BlockInstanceCounts instance_counts, float time);
 void DoPostprocessing(Swapchain *swapchain, Texture render_target, Image swapchain_target, VkCommandBuffer cmdbuf);
 void UploadTransformations(Player *p, VkCommandBuffer cmdbuf);
 

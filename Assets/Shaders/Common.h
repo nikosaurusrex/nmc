@@ -15,7 +15,7 @@ struct Material {
 
 const DirectionalLight sun_light = DirectionalLight(
 	vec3(1.0, 1.0, 0.9) * 2,
-	-normalize(vec3(0.5, -1, 0.5))
+	-normalize(vec3(-1.0, -1, -1.0))
 );
 
 const vec3 sky_color_1 = vec3(0.478, 0.7, 1.9);
@@ -33,7 +33,7 @@ vec3 SampleLinear(sampler2D tex, vec2 uv) {
     return pow(sampled.rgb, vec3(GAMMA));
 }
 
-vec2 DistortShadow(vec2 position){
+vec2 DistortShadow(vec2 position) {
     float cd = length(position);
     float factor = mix(1.0f, cd, 0.9f);
     return position / factor;

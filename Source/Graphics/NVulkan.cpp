@@ -1059,6 +1059,8 @@ Pipeline CreateGraphicsPipeline(GraphicsPipelineOptions *options, VkDescriptorSe
     layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layout_info.setLayoutCount = 1;
     layout_info.pSetLayouts = &desc_layout;
+    layout_info.pPushConstantRanges = options->push_contants;
+    layout_info.pushConstantRangeCount = options->push_constants_count;
 
     VK_CHECK(vkCreatePipelineLayout(vulkan_state.ldevice, &layout_info, 0, &result.layout));
 

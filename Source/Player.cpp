@@ -61,7 +61,7 @@ RayIntersection CastRay(Player *p) {
 	return result;
 }
 
-void UpdatePlayer(Player *p, float df) {
+void UpdatePlayer(Player *p) {
     Int2 mouse_delta = GetMouseDeltaPosition();
 
 	if (mouse_delta.x != 0 || mouse_delta.y != 0) {
@@ -82,6 +82,27 @@ void UpdatePlayer(Player *p, float df) {
 		p->camera.front = front;
 	}
 
+	if (WasButtonPressed(MOUSE_BUTTON_LEFT)) {
+		RayIntersection intersect = CastRay(p);
+		BlockRef br = GetBlockRef(intersect.pos);
+		if (br.c) {
+			PlaceBlock(br, BLOCK_AIR);
+		}
+	}
+
+	if (WasButtonPressed(MOUSE_BUTTON_RIGHT)) {
+		RayIntersection intersect = CastRay(p);
+		BlockRef hit = GetBlockRef(intersect.pos);
+		BlockRef place = GetBlockRef(intersect.prev_pos);
+		if (hit.c && place.c) {
+			if (GetBlock(hit) != BLOCK_AIR && GetBlock(place) == BLOCK_AIR) {
+				PlaceBlock(place, BLOCK_OAK_LOG);
+			}
+		}
+	}
+}
+
+void UpdatePlayerPhysics(Player *p, float df) {
 	p->acceleration = vec3(0);
 
 	vec3 front = p->camera.front;
@@ -135,25 +156,6 @@ void UpdatePlayer(Player *p, float df) {
 			p->position.y = ground_y;
 			p->velocity.y = 0;
 			p->on_ground = 1;
-		}
-	}
-
-	if (WasButtonPressed(MOUSE_BUTTON_LEFT)) {
-		RayIntersection intersect = CastRay(p);
-		BlockRef br = GetBlockRef(intersect.pos);
-		if (br.c) {
-			PlaceBlock(br, BLOCK_AIR);
-		}
-	}
-
-	if (WasButtonPressed(MOUSE_BUTTON_RIGHT)) {
-		RayIntersection intersect = CastRay(p);
-		BlockRef hit = GetBlockRef(intersect.pos);
-		BlockRef place = GetBlockRef(intersect.prev_pos);
-		if (hit.c && place.c) {
-			if (GetBlock(hit) != BLOCK_AIR && GetBlock(place) == BLOCK_AIR) {
-				PlaceBlock(place, BLOCK_OAK_LOG);
-			}
 		}
 	}
 }

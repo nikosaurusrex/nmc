@@ -21,8 +21,12 @@ vec3 RenderSky(vec3 ray) {
 
 vec3 RenderSun(vec3 ray) {
     float angle = acos(dot(ray, sun_light.direction));
-    float mask = smoothstep(0.2, 0.0, angle);
-    return vec3(mask);
+    float mask = smoothstep(0.11, 0.0, angle);
+    return vec3(mask) * vec3(2.0, 3.0, 1.0);
+}
+
+float Noise(vec3 p) {
+    return fract(sin(dot(p, vec3(12.9898,78.233,37.719))) * 43758.5453);
 }
 
 vec3 GetRayDir(vec2 uv) {
@@ -38,9 +42,10 @@ void main() {
     vec3 ray_dir = GetRayDir(p_uv);
 
     vec3 sky = RenderSky(ray_dir);
-    vec3 sun_mask = RenderSun(ray_dir);
+    vec3 sun = RenderSun(ray_dir);
+    // vec3 clouds = RenderClouds(camera_pos, ray_dir);
 
-    vec3 acc = vec3(2.0, 3.0, 1.0) * sun_mask + (1.0 - sun_mask) * sky;
+    vec3 acc = sun + sky;
 
     color = vec4(acc, 1.0);
 }
